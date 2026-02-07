@@ -1,0 +1,7 @@
+{
+  "users": [
+    { "name": "Harrison", "pin": "0000" },
+    { "name": "Quin", "pin": "0000" }
+  ],
+  "wildcardRule": "top10"
+}

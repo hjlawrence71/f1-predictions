@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Race Weekend</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script>document.documentElement.setAttribute('data-theme', localStorage.getItem('f1-theme') || 'light');</script>
+  </head>
+  <body>
+    <div class="page-max">
+    <button id="themeToggle" class="theme-switch" type="button" aria-label="Toggle theme" aria-pressed="false">
+      <span class="theme-icon sun" aria-hidden="true">☀</span>
+      <span class="theme-icon moon" aria-hidden="true">☾</span>
+      <span class="theme-knob" aria-hidden="true"></span>
+    </button>
+    <header class="app-header">
+      <div>
+        <div class="brand">
+          <img class="brand-mark" src="/assets/f1-logo.svg" alt="F1 logo" />
+          <span class="brand-title">Predictions</span>
+        </div>
+        <h1 id="raceTitle">Race Weekend</h1>
+      </div>
+      <div class="header-actions">
+        <a class="btn ghost" href="/index.html">Weekly picks</a>
+        <a class="btn ghost" href="/season.html">Season hub</a>
+        <a class="btn ghost active" aria-current="page" href="/weekly-stats.html">Historical</a>
+        <a class="btn ghost" href="/template.html">Year long</a>
+      </div>
+    </header>
+
+    <section class="card weekend-nav-card">
+      <div class="weekend-nav-row">
+        <a id="backToHistoricalBtn" class="btn" href="/weekly-stats.html">Back to Historical</a>
+        <label for="weekendSelect" class="weekend-nav-label">Switch weekend</label>
+        <select id="weekendSelect"></select>
+        <button id="openWeekendBtn" class="btn ghost" type="button">Open weekend</button>
+      </div>
+    </section>
+
+    <main class="grid" style="margin-top: 16px;">
+      <section class="card">
+        <h2>Qualifying (Top 10)</h2>
+        <div class="table" id="qualiTable"></div>
+      </section>
+
+      <section class="card">
+        <h2>Race (Top 10)</h2>
+        <div class="table" id="raceTable"></div>
+      </section>
+    </main>
+
+    <section class="card" style="margin-top: 24px;">
+      <h2>Predictions vs Actuals</h2>
+      <div class="table" id="picksTable"></div>
+    </section>
+
+    <script src="/theme.js" type="module"></script>
+    <script src="/race.js" type="module"></script>
+    </div>
+  </body>
+</html>

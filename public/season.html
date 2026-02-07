@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Season Hub</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script>document.documentElement.setAttribute('data-theme', localStorage.getItem('f1-theme') || 'light');</script>
+  </head>
+  <body>
+    <div class="page-max">
+    <button id="themeToggle" class="theme-switch" type="button" aria-label="Toggle theme" aria-pressed="false">
+      <span class="theme-icon sun" aria-hidden="true">☀</span>
+      <span class="theme-icon moon" aria-hidden="true">☾</span>
+      <span class="theme-knob" aria-hidden="true"></span>
+    </button>
+    <header class="app-header">
+      <div>
+        <div class="brand">
+          <img class="brand-mark" src="/assets/f1-logo.svg" alt="F1 logo" />
+          <span class="brand-title">Predictions</span>
+        </div>
+        <h1>Season Hub</h1>
+      </div>
+      <div class="header-actions">
+        <a class="btn ghost" href="/index.html">Weekly picks</a>
+        <a class="btn ghost active" aria-current="page" href="/season.html">Season hub</a>
+        <a class="btn ghost" href="/weekly-stats.html">Historical</a>
+        <a class="btn ghost" href="/template.html">Year long</a>
+        <button id="updateDataBtn" class="btn">Update data</button>
+      </div>
+    </header>
+
+    <section class="card">
+      <h2>Trends</h2>
+      <div class="kpi" id="kpiGrid"></div>
+      <div id="picksStatus" class="pred-results" style="margin-bottom: 10px;"></div>
+      <div id="accuracyTable"></div>
+      <div class="chart" id="timelineChart" style="margin-top: 16px;"></div>
+    </section>
+
+    <section class="card" style="margin-top: 24px;">
+      <h2>Current Standings</h2>
+      <div id="standingsTable"></div>
+    </section>
+
+    <script src="/theme.js" type="module"></script>
+    <script src="/season.js" type="module"></script>
+    </div>
+  </body>
+</html>

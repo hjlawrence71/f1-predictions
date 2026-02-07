@@ -1,0 +1,21 @@
+{
+  "name": "f1-predictions-lite",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "20.x"
+  },
+  "scripts": {
+    "preflight": "node scripts/preflight.mjs",
+    "start": "npm run preflight && node server.js",
+    "dev": "npm run preflight && node server.js",
+    "start:stable": "npm run preflight && node server.js",
+    "smoke": "node scripts/smoke.mjs",
+    "setup": "npm ci"
+  },
+  "dependencies": {
+    "csv-parse": "^5.5.6",
+    "express": "^4.19.2"
+  }
+}

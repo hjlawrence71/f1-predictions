@@ -1,0 +1,34 @@
+[
+  {"driverName": "Lando Norris", "team": "McLaren"},
+  {"driverName": "Oscar Piastri", "team": "McLaren"},
+
+  {"driverName": "George Russell", "team": "Mercedes"},
+  {"driverName": "Kimi Antonelli", "team": "Mercedes", "aliases": ["Andrea Kimi Antonelli"]},
+
+  {"driverName": "Max Verstappen", "team": "Red Bull"},
+  {"driverName": "Isack Hadjar", "team": "Red Bull"},
+
+  {"driverName": "Charles Leclerc", "team": "Ferrari"},
+  {"driverName": "Lewis Hamilton", "team": "Ferrari"},
+
+  {"driverName": "Alex Albon", "team": "Williams"},
+  {"driverName": "Carlos Sainz", "team": "Williams"},
+
+  {"driverName": "Liam Lawson", "team": "Racing Bulls"},
+  {"driverName": "Arvid Lindblad", "team": "Racing Bulls"},
+
+  {"driverName": "Fernando Alonso", "team": "Aston Martin"},
+  {"driverName": "Lance Stroll", "team": "Aston Martin"},
+
+  {"driverName": "Esteban Ocon", "team": "Haas"},
+  {"driverName": "Oliver Bearman", "team": "Haas"},
+
+  {"driverName": "Nico Hulkenberg", "team": "Audi"},
+  {"driverName": "Gabriel Bortoleto", "team": "Audi"},
+
+  {"driverName": "Pierre Gasly", "team": "Alpine"},
+  {"driverName": "Franco Colapinto", "team": "Alpine"},
+
+  {"driverName": "Sergio Perez", "team": "Cadillac"},
+  {"driverName": "Valtteri Bottas", "team": "Cadillac"}
+]

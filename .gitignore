@@ -1,0 +1,9 @@
+.DS_Store
+node_modules/
+
+# runtime/import artifacts
+data/backups/
+data/*.csv
+
+# local env noise
+npm-debug.log*
