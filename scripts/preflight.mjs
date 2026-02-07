@@ -4,16 +4,19 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
-const dataDir = path.join(root, 'data');
+const defaultDataDir = path.join(root, 'data');
+const dataDir = process.env.DATA_DIR || defaultDataDir;
 const dbPath = path.join(dataDir, 'db.json');
+const schedulePath = path.join(dataDir, 'schedule_2026.json');
+const gridPath = path.join(dataDir, 'current_grid.json');
+const sourceSchedulePath = path.join(defaultDataDir, 'schedule_2026.json');
+const sourceGridPath = path.join(defaultDataDir, 'current_grid.json');
 
-const required = [
-  path.join(root, 'config.json'),
-  path.join(dataDir, 'schedule_2026.json'),
-  path.join(dataDir, 'current_grid.json')
+const requiredRootFiles = [
+  path.join(root, 'config.json')
 ];
 
-for (const p of required) {
+for (const p of requiredRootFiles) {
   if (!fs.existsSync(p)) {
     throw new Error(`[preflight] Missing required file: ${p}`);
   }
@@ -21,6 +24,23 @@ for (const p of required) {
 
 if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true });
+}
+
+// Seed schedule/grid into mounted DATA_DIR on first cloud boot.
+if (!fs.existsSync(schedulePath)) {
+  if (!fs.existsSync(sourceSchedulePath)) {
+    throw new Error(`[preflight] Missing schedule source file: ${sourceSchedulePath}`);
+  }
+  fs.copyFileSync(sourceSchedulePath, schedulePath);
+  console.log(`[preflight] Seeded schedule_2026.json into ${dataDir}`);
+}
+
+if (!fs.existsSync(gridPath)) {
+  if (!fs.existsSync(sourceGridPath)) {
+    throw new Error(`[preflight] Missing grid source file: ${sourceGridPath}`);
+  }
+  fs.copyFileSync(sourceGridPath, gridPath);
+  console.log(`[preflight] Seeded current_grid.json into ${dataDir}`);
 }
 
 if (!fs.existsSync(dbPath)) {

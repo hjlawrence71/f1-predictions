@@ -8,12 +8,15 @@ import { parse } from 'csv-parse/sync';
 const app = express();
 const PORT = process.env.PORT || 3000;
 const ROOT_DIR = path.dirname(fileURLToPath(import.meta.url));
-const DATA_DIR = process.env.DATA_DIR || path.join(ROOT_DIR, 'data');
+const DEFAULT_DATA_DIR = path.join(ROOT_DIR, 'data');
+const DATA_DIR = process.env.DATA_DIR || DEFAULT_DATA_DIR;
 const DB_PATH = path.join(DATA_DIR, 'db.json');
 const BACKUP_DIR = path.join(DATA_DIR, 'backups');
 const MAX_DB_BACKUPS = 25;
 const SCHEDULE_PATH = path.join(DATA_DIR, 'schedule_2026.json');
 const GRID_PATH = path.join(DATA_DIR, 'current_grid.json');
+const SCHEDULE_FALLBACK_PATH = path.join(DEFAULT_DATA_DIR, 'schedule_2026.json');
+const GRID_FALLBACK_PATH = path.join(DEFAULT_DATA_DIR, 'current_grid.json');
 
 const DATA_SOURCES = {
   drivers: 'https://raw.githubusercontent.com/muharsyad/formula-one-datasets/main/drivers.csv',
@@ -253,13 +256,19 @@ function saveDb(data) {
 }
 
 function loadSchedule() {
-  if (!fs.existsSync(SCHEDULE_PATH)) return [];
-  return JSON.parse(fs.readFileSync(SCHEDULE_PATH, 'utf8'));
+  const candidate = fs.existsSync(SCHEDULE_PATH)
+    ? SCHEDULE_PATH
+    : (fs.existsSync(SCHEDULE_FALLBACK_PATH) ? SCHEDULE_FALLBACK_PATH : null);
+  if (!candidate) return [];
+  return JSON.parse(fs.readFileSync(candidate, 'utf8'));
 }
 
 function loadCurrentGrid() {
-  if (!fs.existsSync(GRID_PATH)) return [];
-  return JSON.parse(fs.readFileSync(GRID_PATH, 'utf8'));
+  const candidate = fs.existsSync(GRID_PATH)
+    ? GRID_PATH
+    : (fs.existsSync(GRID_FALLBACK_PATH) ? GRID_FALLBACK_PATH : null);
+  if (!candidate) return [];
+  return JSON.parse(fs.readFileSync(candidate, 'utf8'));
 }
 
 function loadConfig() {
