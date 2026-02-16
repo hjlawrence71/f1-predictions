@@ -12,10 +12,14 @@
     "dev": "npm run preflight && node server.js",
     "start:stable": "npm run preflight && node server.js",
     "smoke": "node scripts/smoke.mjs",
-    "setup": "npm ci"
+    "setup": "npm ci",
+    "start:watch": "nodemon --watch server.js --watch public --watch data --ext js,html,css,json --exec \"PORT=3000 node server.js\""
   },
   "dependencies": {
     "csv-parse": "^5.5.6",
     "express": "^4.19.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.11"
   }
 }

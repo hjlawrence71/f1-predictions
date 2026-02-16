@@ -25,9 +25,13 @@
       <div class="header-actions">
         <a class="btn ghost" href="/index.html">Weekly picks</a>
         <a class="btn ghost active" aria-current="page" href="/season.html">Season hub</a>
-        <a class="btn ghost" href="/weekly-stats.html">Historical</a>
-        <a class="btn ghost" href="/template.html">Year long</a>
-        <button id="updateDataBtn" class="btn">Update data</button>
+        <a class="btn ghost" href="/driver-radar.html">Intelligence</a>
+        <a class="btn ghost" href="/projections.html">Projection Lab</a>
+        <a class="btn ghost" href="/template.html">Championship</a>
+        <label>
+          Season
+          <select id="seasonSelect" aria-label="Season selector"></select>
+        </label>
       </div>
     </header>
 
@@ -44,8 +48,27 @@
       <div id="standingsTable"></div>
     </section>
 
+    <section id="historicalSection" class="card history-round-nav" style="margin-top: 24px;">
+      <h2>Historical Explorer</h2>
+      <div class="history-round-controls">
+        <label for="raceSelect">Select round and view picks vs results</label>
+        <div class="history-round-row">
+          <select id="raceSelect"></select>
+          <button id="goRoundBtn" class="btn ghost" type="button">Open weekend</button>
+        </div>
+      </div>
+      <div id="explorerRoundDetails" class="explorer-round-details"></div>
+    </section>
+
+    <section class="card" style="margin-top: 16px;">
+      <h2>Historical Driver Picks</h2>
+      <div id="driverStats"></div>
+      <div id="mostPickedWinners" style="margin-top: 16px;"></div>
+    </section>
+
     <script src="/theme.js" type="module"></script>
     <script src="/season.js" type="module"></script>
+    <script src="/weekly-stats.js" type="module"></script>
     </div>
   </body>
 </html>

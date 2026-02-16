@@ -3,11 +3,11 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>F1 Predictions Lite</title>
+    <title>Race Control</title>
     <link rel="stylesheet" href="/styles.css" />
     <script>document.documentElement.setAttribute('data-theme', localStorage.getItem('f1-theme') || 'light');</script>
   </head>
-  <body class="weekly-page" data-weekly-layout="hybrid-1-3">
+  <body class="weekly-page" data-weekly-layout="race-battle">
     <div class="page-max">
       <button id="themeToggle" class="theme-switch" type="button" aria-label="Toggle theme" aria-pressed="false">
         <span class="theme-icon sun" aria-hidden="true">☀</span>
@@ -21,51 +21,71 @@
             <img class="brand-mark" src="/assets/f1-logo.svg" alt="F1 logo" />
             <span class="brand-title">Predictions</span>
           </div>
-          <h1>Race Weekend Desk</h1>
+          <h1>Race Control</h1>
         </div>
         <div class="header-actions">
           <a class="btn ghost active" aria-current="page" href="/index.html">Weekly picks</a>
           <a class="btn ghost" href="/season.html">Season hub</a>
-          <a class="btn ghost" href="/weekly-stats.html">Historical</a>
-          <a class="btn ghost" href="/template.html">Year long</a>
-          <button id="updateDataBtn" class="btn">Update data</button>
+          <a class="btn ghost" href="/driver-radar.html">Intelligence</a>
+          <a class="btn ghost" href="/projections.html">Projection Lab</a>
+          <a class="btn ghost" href="/template.html">Championship</a>
         </div>
       </header>
-
       <section id="weekendFocus" class="card weekend-focus"></section>
 
       <main class="grid weekly-grid" style="margin-top: 16px;">
         <section class="card prediction-card">
           <div class="prediction-head">
-            <h2 id="predictionTitle">Guided Prediction</h2>
+            <h2 id="predictionTitle">Race Control</h2>
           </div>
 
-          <div id="stepperControls" class="stepper-controls" aria-label="Two-step navigation">
-            <button class="btn ghost step-btn" data-step="1" type="button">Setup</button>
-            <button class="btn ghost step-btn" data-step="2" type="button">Picks</button>
-            <button class="btn ghost step-btn" data-step="3" type="button">Review</button>
-          </div>
-
-          <section id="userFocus" class="user-focus-card"></section>
-
-          <div class="stage" data-step-panel="1">
-            <div class="controls">
-              <label>
-                User
-                <select id="userSelect"></select>
-              </label>
-              <label>
-                Season
-                <select id="seasonSelect"></select>
-              </label>
-              <label>
-                Round
-                <select id="roundSelect"></select>
-              </label>
+          <section class="battle-top">
+            <div class="battle-control-stack">
+              <div class="controls">
+                <label>
+                  User
+                  <select id="userSelect"></select>
+                </label>
+                <label>
+                  Season
+                  <select id="seasonSelect"></select>
+                </label>
+                <label>
+                  Round
+                  <select id="roundSelect"></select>
+                </label>
+              </div>
+              <section id="userFocus" class="user-focus-card"></section>
             </div>
+          </section>
+
+          <div id="stepperControls" class="stepper-controls review-tabs" aria-label="Picks and review tabs">
+            <button class="btn ghost step-btn" data-step="2" type="button">Picks</button>
+            <button class="btn ghost step-btn" data-step="3" type="button">Pick Review</button>
           </div>
 
           <form id="predictionForm" class="pred-form stage" data-step-panel="2">
+            <div class="lock-pick-strip" role="group" aria-label="Lock pick selector">
+              <div class="lock-pick-inline">
+                <span class="lock-pick-label">Lock Pick (+1)</span>
+                <select id="lockField" class="lock-pick-select">
+                  <option value="">No lock</option>
+                  <option value="p1">P1</option>
+                  <option value="p2">P2</option>
+                  <option value="p3">P3</option>
+                  <option value="pole">Pole Position</option>
+                  <option value="fastestLap">Fastest Lap</option>
+                  <option value="sidebetPoleConverts">Pole Converts</option>
+                  <option value="sidebetFrontRowWinner">Front Row Winner</option>
+                  <option value="sidebetAnyDnf">Any DNF</option>
+                  <option value="sidebetRedFlag">Red Flag</option>
+                  <option value="sidebetBigMover">Big Mover</option>
+                  <option value="sidebetOther7Podium">Other 7 Podium</option>
+                </select>
+              </div>
+              <small class="lock-pick-note">You can lock any scored pick.</small>
+            </div>
+
             <label class="pick-slot">
               <span class="pick-slot-title">P1</span>
               <select data-pick="p1" class="driverSelect"></select>
@@ -96,38 +116,104 @@
               <input data-pick="wildcardText" id="wildcardText" type="text" placeholder="Your wildcard call" />
               <small class="pick-insight">Free text call</small>
             </label>
-            <label class="pick-slot">
-              <span class="pick-slot-title">Lock Pick (x2)</span>
-              <select id="lockField">
+            <div class="pick-section-title">Yes/No Side Bets</div>
+
+            <label class="pick-slot pick-slot-yn">
+              <span class="pick-slot-title">Pole Converts <em class="pick-points">(1 pt)</em></span>
+              <select id="sidebetPoleConverts" data-sidebet="poleConverts">
                 <option value="">-</option>
-                <option value="p1">P1</option>
-                <option value="p2">P2</option>
-                <option value="p3">P3</option>
-                <option value="pole">Pole</option>
-                <option value="fastestLap">Fastest Lap</option>
+                <option value="yes">Yes</option>
+                <option value="no">No</option>
               </select>
-              <small class="pick-insight">Confidence multiplier</small>
+              <small class="pick-insight">Did the pole sitter win the race?</small>
             </label>
-            <button class="btn" type="submit">Save prediction</button>
+
+            <label class="pick-slot pick-slot-yn">
+              <span class="pick-slot-title">Front Row Winner <em class="pick-points">(1 pt)</em></span>
+              <select id="sidebetFrontRowWinner" data-sidebet="frontRowWinner">
+                <option value="">-</option>
+                <option value="yes">Yes</option>
+                <option value="no">No</option>
+              </select>
+              <small class="pick-insight">Did the winner start P1 or P2?</small>
+            </label>
+
+            <label class="pick-slot pick-slot-yn">
+              <span class="pick-slot-title">Any DNF <em class="pick-points">(1 pt)</em></span>
+              <select id="sidebetAnyDnf" data-sidebet="anyDnf">
+                <option value="">-</option>
+                <option value="yes">Yes</option>
+                <option value="no">No</option>
+              </select>
+              <small class="pick-insight">Did at least one driver DNF?</small>
+            </label>
+
+            <label class="pick-slot pick-slot-yn">
+              <span class="pick-slot-title">Red Flag <em class="pick-points">(2 pts)</em></span>
+              <select id="sidebetRedFlag" data-sidebet="redFlag">
+                <option value="">-</option>
+                <option value="yes">Yes</option>
+                <option value="no">No</option>
+              </select>
+              <small class="pick-insight">Any race-weekend red flag?</small>
+            </label>
+
+            <label class="pick-slot pick-slot-yn">
+              <span class="pick-slot-title pick-slot-title-info">Big Mover <em class="pick-points">(2 pts)</em>
+                <button class="metric-info-btn" type="button" data-metric-help="sidebet_big_mover" data-metric-label="Big Mover" aria-label="Info: Big Mover">i</button>
+              </span>
+              <select id="sidebetBigMover" data-sidebet="bigMover">
+                <option value="">-</option>
+                <option value="yes">Yes</option>
+                <option value="no">No</option>
+              </select>
+              <small class="pick-insight">Did any driver gain 8+ places from grid to finish?</small>
+            </label>
+
+            <label class="pick-slot pick-slot-yn">
+              <span class="pick-slot-title pick-slot-title-info">Other 7 Podium <em class="pick-points">(2 pts)</em>
+                <button class="metric-info-btn" type="button" data-metric-help="sidebet_other7_podium" data-metric-label="Other 7 Podium" aria-label="Info: Other 7 Podium">i</button>
+              </span>
+              <select id="sidebetOther7Podium" data-sidebet="other7Podium">
+                <option value="">-</option>
+                <option value="yes">Yes</option>
+                <option value="no">No</option>
+              </select>
+              <small class="pick-insight">Podium by a driver from outside McLaren, Mercedes, Red Bull, Ferrari?</small>
+            </label>
+
+            <div class="pred-form-actions">
+              <button class="btn ghost" type="button" id="randomPicksBtn">Random picks</button>
+              <button class="btn" type="submit">Save prediction</button>
+            </div>
           </form>
 
           <section id="reviewPanel" class="stage" data-step-panel="3"></section>
-
-          <div id="stepActions" class="step-actions">
-            <button id="stepPrevBtn" class="btn ghost" type="button">Back</button>
-            <button id="stepNextBtn" class="btn" type="button">Continue</button>
-          </div>
 
           <div class="pred-results" id="predResults"></div>
         </section>
 
         <section class="card driver-form-card">
-          <div class="prediction-head">
-            <h2>Driver Form Deck</h2>
-            <div class="chip">Live form</div>
+          <div class="prediction-head driver-radar-head">
+            <div>
+              <h2>Intelligence</h2>
+              <div class="chip">Top 5 pulse</div>
+            </div>
+            <a class="btn ghost driver-radar-open" href="/driver-radar.html">Open Intelligence</a>
           </div>
-          <div id="statsHighlights" class="stats-highlights"></div>
-          <div id="statsTable" class="table"></div>
+
+          <section class="radar-top-five-wrap">
+            <h3>Top 5 Drivers</h3>
+            <div id="statsHighlights" class="stats-highlights"></div>
+          </section>
+
+          <section class="radar-rest-wrap">
+            <div class="radar-rest-head">
+              <h3>Grid Explorer</h3>
+              <select id="restDriverSelect"></select>
+            </div>
+            <div id="restDriverCard" class="radar-rest-card"></div>
+          </section>
         </section>
       </main>
 

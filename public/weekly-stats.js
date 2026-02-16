@@ -1,4 +1,4 @@
-const updateDataBtn = document.getElementById('updateDataBtn');
+import { teamToneVars } from './team-colors.js';
 const raceSelect = document.getElementById('raceSelect');
 const goRoundBtn = document.getElementById('goRoundBtn');
 const driverStats = document.getElementById('driverStats');
@@ -7,17 +7,40 @@ const explorerRoundDetails = document.getElementById('explorerRoundDetails');
 
 const query = new URLSearchParams(window.location.search);
 const preselectedRound = Number(query.get('round') || 0);
+const preselectedSeason = Number(query.get('season') || 0);
+const seasonSelect = document.getElementById('seasonSelect');
 
 let perRoundCache = [];
 let nameMapCache = new Map();
 
-async function fetchJson(url, options) {
-  const res = await fetch(url, options);
-  if (!res.ok) {
-    const msg = await res.text();
-    throw new Error(msg || `Request failed: ${res.status}`);
+async function fetchJson(url, options = {}, retries = 2) {
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 12000);
+
+    try {
+      const res = await fetch(url, { ...options, signal: controller.signal });
+      clearTimeout(timeout);
+
+      if (!res.ok) {
+        const msg = await res.text();
+        throw new Error(msg || `Request failed: ${res.status}`);
+      }
+
+      return res.json();
+    } catch (err) {
+      clearTimeout(timeout);
+      if (attempt >= retries) {
+        const message = err?.name === 'AbortError'
+          ? `Request timeout for ${url}`
+          : (err?.message || `Failed to fetch ${url}`);
+        throw new Error(message);
+      }
+      await new Promise(resolve => setTimeout(resolve, 300 * (attempt + 1)));
+    }
   }
-  return res.json();
+
+  throw new Error(`Failed to fetch ${url}`);
 }
 
 function logoFor(team) {
@@ -25,12 +48,18 @@ function logoFor(team) {
   return `<img class="logo" src="/team-logos/${slug}.png" alt="" onerror="this.remove()">`;
 }
 
+function selectedSeason() {
+  const picked = Number(seasonSelect?.value || preselectedSeason || 2026);
+  return Number.isFinite(picked) && picked > 0 ? picked : 2026;
+}
+
 function renderDriverStats(rows) {
+  if (!driverStats) return;
   const items = rows.map((r, idx) => `
-    <li class="standing-item">
+    <li class="standing-item team-tone-card" style="${teamToneVars(r.team)}">
       <span class="standing-rank">${idx + 1}</span>
       <div class="standing-main">
-        <div class="standing-name">${r.driverName}</div>
+        <div class="standing-name team-tone-text" style="${teamToneVars(r.team)}">${r.driverName}</div>
         <div class="standing-sub">${logoFor(r.team)}${r.team}</div>
       </div>
       <div class="standing-points">${r.picks}<span>picks</span></div>
@@ -51,11 +80,12 @@ function renderDriverStats(rows) {
 }
 
 function renderMostPickedWinners(rows) {
+  if (!mostPickedWinners) return;
   const items = rows.map((r, idx) => `
-    <li class="standing-item">
+    <li class="standing-item team-tone-card" style="${teamToneVars(r.team)}">
       <span class="standing-rank">${idx + 1}</span>
       <div class="standing-main">
-        <div class="standing-name">${r.driverName}</div>
+        <div class="standing-name team-tone-text" style="${teamToneVars(r.team)}">${r.driverName}</div>
         <div class="standing-sub">${logoFor(r.team)}${r.team}</div>
       </div>
       <div class="standing-points">${r.picks}<span>P1 picks</span></div>
@@ -93,6 +123,31 @@ function driverName(nameMap, id) {
   return nameMap.get(id)?.name || id;
 }
 
+function yesNoLabel(value) {
+  if (value === true) return 'Yes';
+  if (value === false) return 'No';
+  return '—';
+}
+
+function lockFieldLabel(value) {
+  const map = {
+    p1: 'P1',
+    p2: 'P2',
+    p3: 'P3',
+    pole: 'Pole Position',
+    fastestLap: 'Fastest Lap',
+    sidebetPoleConverts: 'Pole Converts',
+    sidebetFrontRowWinner: 'Front Row Winner',
+    sidebetAnyDnf: 'Any DNF',
+    sidebetRedFlag: 'Red Flag',
+    sidebetBigMover: 'Big Mover',
+    sidebetOther7Podium: 'Other 7 Podium'
+  };
+  const key = String(value || '').trim();
+  if (!key) return '—';
+  return map[key] || key;
+}
+
 function renderUserRoundCard(userRow) {
   if (userRow.missing) {
     return `
@@ -110,12 +165,14 @@ function renderUserRoundCard(userRow) {
         <span class="chip ${userRow.points.total > 0 ? 'dark' : ''}">${userRow.points.total} pts</span>
       </div>
       <div class="muted">P1 ${userRow.points.p1} · P2 ${userRow.points.p2} · P3 ${userRow.points.p3} · Pole ${userRow.points.pole} · FL ${userRow.points.fastestLap} · Lock ${userRow.points.lock}</div>
+      <div class="muted">Side bets ${userRow.points.sideBets || 0} pts (Stable ${userRow.points.sideBetStable || 0} · Chaos ${userRow.points.sideBetChaos || 0})</div>
       <div style="display:flex;gap:6px;margin:8px 0;flex-wrap:wrap;">
         <span class="chip ${userRow.podium_exact ? 'red' : ''}">Podium exact</span>
         <span class="chip">${(userRow.accuracy * 100).toFixed(1)}% accuracy</span>
-        <span class="chip">Lock: ${userRow.lock || '—'}</span>
+        <span class="chip">Lock: ${lockFieldLabel(userRow.lock)}</span>
       </div>
       <div class="muted">Wildcard: ${userRow.picks.wildcardText || '—'}</div>
+      <div class="muted">Y/N picks: Pole converts ${yesNoLabel(userRow.picks?.sideBets?.poleConverts)} · Front row winner ${yesNoLabel(userRow.picks?.sideBets?.frontRowWinner)} · Any DNF ${yesNoLabel(userRow.picks?.sideBets?.anyDnf)} · Red flag ${yesNoLabel(userRow.picks?.sideBets?.redFlag)} · Big mover ${yesNoLabel(userRow.picks?.sideBets?.bigMover)} · Other 7 podium ${yesNoLabel(userRow.picks?.sideBets?.other7Podium)}</div>
     </div>
   `;
 }
@@ -127,6 +184,8 @@ function renderRoundDetails(roundData, nameMap) {
     : 'No official results yet';
   const actualQuali = actual.pole ? driverName(nameMap, actual.pole) : 'No pole data yet';
   const actualFastest = actual.fastestLap ? driverName(nameMap, actual.fastestLap) : 'No fastest lap data yet';
+  const actualSide = actual.sideBets || {};
+  const actualSideSummary = `Pole converts ${yesNoLabel(actualSide.poleConverts)} · Front row winner ${yesNoLabel(actualSide.frontRowWinner)} · Any DNF ${yesNoLabel(actualSide.anyDnf)} · Red flag ${yesNoLabel(actualSide.redFlag)} · Big mover ${yesNoLabel(actualSide.bigMover)} · Other 7 podium ${yesNoLabel(actualSide.other7Podium)}`;
 
   const usersHtml = roundData.users.map(renderUserRoundCard).join('');
 
@@ -146,6 +205,7 @@ function renderRoundDetails(roundData, nameMap) {
         <div><strong>Actual podium:</strong> ${actualPodium}</div>
         <div><strong>Pole:</strong> ${actualQuali}</div>
         <div><strong>Fastest lap:</strong> ${actualFastest}</div>
+        <div><strong>Y/N outcomes:</strong> ${actualSideSummary}</div>
       </div>
       <div class="round-users">
         ${usersHtml}
@@ -190,14 +250,16 @@ function setupExplorerRoundDetails(perRound, nameMap) {
 
 function goToSelectedWeekend() {
   if (!raceSelect) return;
+  const season = selectedSeason();
   const round = raceSelect.value;
   const selected = raceSelect.options[raceSelect.selectedIndex];
   const raceName = selected?.dataset?.raceName || '';
-  window.location.href = `/race.html?season=2026&round=${round}&race=${encodeURIComponent(raceName)}`;
+  window.location.href = `/race.html?season=${season}&round=${round}&race=${encodeURIComponent(raceName)}`;
 }
 
 async function loadAll() {
-  const races = await fetchJson('/api/races?season=2026');
+  const season = selectedSeason();
+  const races = await fetchJson(`/api/races?season=${season}`);
 
   if (raceSelect) {
     const previouslySelected = Number(raceSelect.value || 0);
@@ -218,7 +280,7 @@ async function loadAll() {
     }
   }
 
-  const stats = await fetchJson('/api/weekly/stats?season=2026');
+  const stats = await fetchJson(`/api/weekly/stats?season=${season}`);
   renderDriverStats(stats.pickFrequency);
   renderMostPickedWinners(stats.mostPickedWinners);
 
@@ -227,35 +289,21 @@ async function loadAll() {
   setupExplorerRoundDetails(stats.perRound, map);
 }
 
-async function updateData() {
-  if (updateDataBtn) {
-    updateDataBtn.disabled = true;
-    updateDataBtn.textContent = 'Updating...';
-  }
-
-  try {
-    await fetchJson('/api/update-data', { method: 'POST' });
-    await loadAll();
-  } catch (err) {
-    alert(err.message);
-  } finally {
-    if (updateDataBtn) {
-      updateDataBtn.disabled = false;
-      updateDataBtn.textContent = 'Update data';
-    }
-  }
-}
-
-if (updateDataBtn) {
-  updateDataBtn.addEventListener('click', updateData);
-}
-
 if (goRoundBtn) {
   goRoundBtn.addEventListener('click', goToSelectedWeekend);
 }
 
 if (raceSelect) {
   raceSelect.addEventListener('change', paintExplorerRoundDetails);
+}
+
+if (seasonSelect) {
+  seasonSelect.addEventListener('change', () => {
+    loadAll().catch(err => {
+      console.error(err);
+      alert(err.message);
+    });
+  });
 }
 
 loadAll().catch(err => {

@@ -1,0 +1,170 @@
+[
+  {
+    "season": 2025,
+    "round": 1,
+    "raceName": "Australian Grand Prix",
+    "start_date": "2025-03-14",
+    "end_date": "2025-03-16"
+  },
+  {
+    "season": 2025,
+    "round": 2,
+    "raceName": "Chinese Grand Prix",
+    "start_date": "2025-03-21",
+    "end_date": "2025-03-23"
+  },
+  {
+    "season": 2025,
+    "round": 3,
+    "raceName": "Japanese Grand Prix",
+    "start_date": "2025-04-04",
+    "end_date": "2025-04-06"
+  },
+  {
+    "season": 2025,
+    "round": 4,
+    "raceName": "Bahrain Grand Prix",
+    "start_date": "2025-04-11",
+    "end_date": "2025-04-13"
+  },
+  {
+    "season": 2025,
+    "round": 5,
+    "raceName": "Saudi Arabian Grand Prix",
+    "start_date": "2025-04-18",
+    "end_date": "2025-04-20"
+  },
+  {
+    "season": 2025,
+    "round": 6,
+    "raceName": "Miami Grand Prix",
+    "start_date": "2025-05-02",
+    "end_date": "2025-05-04"
+  },
+  {
+    "season": 2025,
+    "round": 7,
+    "raceName": "Emilia Romagna Grand Prix",
+    "start_date": "2025-05-16",
+    "end_date": "2025-05-18"
+  },
+  {
+    "season": 2025,
+    "round": 8,
+    "raceName": "Monaco Grand Prix",
+    "start_date": "2025-05-23",
+    "end_date": "2025-05-25"
+  },
+  {
+    "season": 2025,
+    "round": 9,
+    "raceName": "Spanish Grand Prix",
+    "start_date": "2025-05-30",
+    "end_date": "2025-06-01"
+  },
+  {
+    "season": 2025,
+    "round": 10,
+    "raceName": "Canadian Grand Prix",
+    "start_date": "2025-06-13",
+    "end_date": "2025-06-15"
+  },
+  {
+    "season": 2025,
+    "round": 11,
+    "raceName": "Austrian Grand Prix",
+    "start_date": "2025-06-27",
+    "end_date": "2025-06-29"
+  },
+  {
+    "season": 2025,
+    "round": 12,
+    "raceName": "British Grand Prix",
+    "start_date": "2025-07-04",
+    "end_date": "2025-07-06"
+  },
+  {
+    "season": 2025,
+    "round": 13,
+    "raceName": "Belgian Grand Prix",
+    "start_date": "2025-07-25",
+    "end_date": "2025-07-27"
+  },
+  {
+    "season": 2025,
+    "round": 14,
+    "raceName": "Hungarian Grand Prix",
+    "start_date": "2025-08-01",
+    "end_date": "2025-08-03"
+  },
+  {
+    "season": 2025,
+    "round": 15,
+    "raceName": "Dutch Grand Prix",
+    "start_date": "2025-08-29",
+    "end_date": "2025-08-31"
+  },
+  {
+    "season": 2025,
+    "round": 16,
+    "raceName": "Italian Grand Prix",
+    "start_date": "2025-09-05",
+    "end_date": "2025-09-07"
+  },
+  {
+    "season": 2025,
+    "round": 17,
+    "raceName": "Azerbaijan Grand Prix",
+    "start_date": "2025-09-19",
+    "end_date": "2025-09-21"
+  },
+  {
+    "season": 2025,
+    "round": 18,
+    "raceName": "Singapore Grand Prix",
+    "start_date": "2025-10-03",
+    "end_date": "2025-10-05"
+  },
+  {
+    "season": 2025,
+    "round": 19,
+    "raceName": "United States Grand Prix",
+    "start_date": "2025-10-17",
+    "end_date": "2025-10-19"
+  },
+  {
+    "season": 2025,
+    "round": 20,
+    "raceName": "Mexico City Grand Prix",
+    "start_date": "2025-10-24",
+    "end_date": "2025-10-26"
+  },
+  {
+    "season": 2025,
+    "round": 21,
+    "raceName": "São Paulo Grand Prix",
+    "start_date": "2025-11-07",
+    "end_date": "2025-11-09"
+  },
+  {
+    "season": 2025,
+    "round": 22,
+    "raceName": "Las Vegas Grand Prix",
+    "start_date": "2025-11-21",
+    "end_date": "2025-11-23"
+  },
+  {
+    "season": 2025,
+    "round": 23,
+    "raceName": "Qatar Grand Prix",
+    "start_date": "2025-11-28",
+    "end_date": "2025-11-30"
+  },
+  {
+    "season": 2025,
+    "round": 24,
+    "raceName": "Abu Dhabi Grand Prix",
+    "start_date": "2025-12-05",
+    "end_date": "2025-12-07"
+  }
+]

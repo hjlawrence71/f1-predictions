@@ -1,0 +1,26 @@
+season,round,driver,lap,lap_time,is_deleted,stint,compound,position_start_lap,position_end_lap
+2026,1,Max Verstappen,1,1:38.901,false,1,Soft,2,1
+2026,1,Max Verstappen,2,1:27.301,false,1,Soft,1,1
+2026,1,Max Verstappen,3,1:27.102,false,1,Soft,1,1
+2026,1,Max Verstappen,4,1:27.244,false,1,Soft,1,1
+2026,1,Max Verstappen,5,1:27.155,false,1,Soft,1,1
+2026,1,Lando Norris,1,1:39.044,false,1,Soft,1,2
+2026,1,Lando Norris,2,1:27.334,false,1,Soft,2,2
+2026,1,Lando Norris,3,1:27.010,false,1,Soft,2,2
+2026,1,Lando Norris,4,1:27.211,false,1,Soft,2,2
+2026,1,Lando Norris,5,1:27.088,false,1,Soft,2,2
+2026,1,Charles Leclerc,1,1:39.280,false,1,Soft,3,3
+2026,1,Charles Leclerc,2,1:27.512,false,1,Soft,3,3
+2026,1,Charles Leclerc,3,1:27.288,false,1,Soft,3,3
+2026,1,Charles Leclerc,4,1:27.301,false,1,Soft,3,3
+2026,1,Charles Leclerc,5,1:27.215,false,1,Soft,3,3
+2026,1,Oscar Piastri,1,1:39.511,false,1,Soft,4,4
+2026,1,Oscar Piastri,2,1:27.600,false,1,Soft,4,4
+2026,1,Oscar Piastri,3,1:27.404,false,1,Soft,4,4
+2026,1,Oscar Piastri,4,1:27.388,false,1,Soft,4,4
+2026,1,Oscar Piastri,5,1:27.300,false,1,Soft,4,4
+2026,1,George Russell,1,1:39.720,false,1,Soft,5,5
+2026,1,George Russell,2,1:27.801,false,1,Soft,5,5
+2026,1,George Russell,3,1:27.500,false,1,Soft,5,5
+2026,1,George Russell,4,1:27.490,true,1,Soft,5,5
+2026,1,George Russell,5,1:27.455,false,1,Soft,5,5

@@ -1,7 +1,13 @@
 {
   "users": [
-    { "name": "Harrison", "pin": "0000" },
-    { "name": "Quin", "pin": "0000" }
+    {
+      "name": "Harrison",
+      "pin": "1776"
+    },
+    {
+      "name": "Quin",
+      "pin": "1641"
+    }
   ],
   "wildcardRule": "top10"
 }

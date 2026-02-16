@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Intelligence</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script>document.documentElement.setAttribute('data-theme', localStorage.getItem('f1-theme') || 'light');</script>
+  </head>
+  <body class="weekly-page radar-page" data-weekly-layout="hybrid-1-3">
+    <div class="page-max">
+      <button id="themeToggle" class="theme-switch" type="button" aria-label="Toggle theme" aria-pressed="false">
+        <span class="theme-icon sun" aria-hidden="true">☀</span>
+        <span class="theme-icon moon" aria-hidden="true">☾</span>
+        <span class="theme-knob" aria-hidden="true"></span>
+      </button>
+
+      <header class="app-header">
+        <div>
+          <div class="brand">
+            <img class="brand-mark" src="/assets/f1-logo.svg" alt="F1 logo" />
+            <span class="brand-title">Predictions</span>
+          </div>
+          <h1>Intelligence</h1>
+        </div>
+        <div class="header-actions">
+          <a class="btn ghost" href="/index.html">Weekly picks</a>
+          <a class="btn ghost" href="/season.html">Season hub</a>
+          <a class="btn ghost active" aria-current="page" href="/driver-radar.html">Intelligence</a>
+          <a class="btn ghost" href="/projections.html">Projection Lab</a>
+          <a class="btn ghost" href="/template.html">Championship</a>
+          <label>
+            Season
+            <select id="seasonSelect"></select>
+          </label>
+          <label>
+            View
+            <select id="statsViewSelect">
+              <option value="season">Season</option>
+              <option value="cumulative">Cumulative</option>
+              <option value="blended">Blended</option>
+            </select>
+          </label>
+        </div>
+      </header>
+
+      <section class="card driver-form-card">
+        <div class="prediction-head driver-radar-head">
+          <div>
+            <h2>Intelligence</h2>
+            <div class="chip">Qualifying + race + momentum</div>
+          </div>
+        </div>
+
+        <section class="timing-intake openf1-sync-card">
+          <h3>OpenF1 Sync</h3>
+          <p class="muted">Sync qualifying, race results, and lap intelligence from OpenF1 by round.</p>
+          <div class="timing-intake-grid openf1-sync-grid">
+            <label>
+              Round
+              <select id="roundSelect"></select>
+            </label>
+            <label>
+              Weekend
+              <input id="roundLabel" type="text" readonly />
+            </label>
+          </div>
+          <div class="timing-intake-actions">
+            <button id="syncOpenF1Btn" class="btn ghost" type="button">Sync from OpenF1</button>
+            <span id="openF1SyncStatus" class="muted">No sync run yet.</span>
+          </div>
+        </section>
+
+        <section class="team-atlas-shell">
+          <div class="team-atlas-head">
+            <h3>Team Atlas</h3>
+            <span class="chip" id="teamAtlasStatus">11 teams</span>
+          </div>
+          <div id="teamAtlas" class="team-atlas-grid"></div>
+          <div id="teamDetail" class="team-drilldown"></div>
+        </section>
+
+        <div id="statsHighlights" class="stats-highlights"></div>
+        <div id="statsTable" class="table"></div>
+      </section>
+
+      <script src="/theme.js" type="module"></script>
+      <script src="/driver-radar.js" type="module"></script>
+    </div>
+  </body>
+</html>

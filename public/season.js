@@ -1,19 +1,42 @@
+import { metricLabelHtml, bindMetricHelpTooltips } from './metric-help.js';
+import { teamToneVars, canonicalTeamName } from './team-colors.js';
 const kpiGrid = document.getElementById('kpiGrid');
 const standingsTable = document.getElementById('standingsTable');
-const updateDataBtn = document.getElementById('updateDataBtn');
 const accuracyTable = document.getElementById('accuracyTable');
 const timelineChart = document.getElementById('timelineChart');
 const picksStatus = document.getElementById('picksStatus');
+const seasonSelect = document.getElementById('seasonSelect');
 
 const USER_COLORS = ['#e10600', '#0f1724', '#1263e6', '#0f9f8f'];
 
-async function fetchJson(url, options) {
-  const res = await fetch(url, options);
-  if (!res.ok) {
-    const msg = await res.text();
-    throw new Error(msg || `Request failed: ${res.status}`);
+async function fetchJson(url, options = {}, retries = 2) {
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 12000);
+
+    try {
+      const res = await fetch(url, { ...options, signal: controller.signal });
+      clearTimeout(timeout);
+
+      if (!res.ok) {
+        const msg = await res.text();
+        throw new Error(msg || `Request failed: ${res.status}`);
+      }
+
+      return res.json();
+    } catch (err) {
+      clearTimeout(timeout);
+      if (attempt >= retries) {
+        const message = err?.name === 'AbortError'
+          ? `Request timeout for ${url}`
+          : (err?.message || `Failed to fetch ${url}`);
+        throw new Error(message);
+      }
+      await new Promise(resolve => setTimeout(resolve, 300 * (attempt + 1)));
+    }
   }
-  return res.json();
+
+  throw new Error(`Failed to fetch ${url}`);
 }
 
 function avg(values) {
@@ -27,6 +50,28 @@ function pct(value) {
 
 function fixed(value, digits = 2) {
   return Number(value || 0).toFixed(digits);
+}
+
+function selectedSeason() {
+  return Number(seasonSelect?.value || 2026);
+}
+
+async function loadSeasons() {
+  if (!seasonSelect) return;
+  const seasons = await fetchJson('/api/seasons');
+  seasonSelect.innerHTML = '';
+
+  seasons
+    .sort((a, b) => b - a)
+    .forEach((season) => {
+      const opt = document.createElement('option');
+      opt.value = String(season);
+      opt.textContent = String(season);
+      seasonSelect.appendChild(opt);
+    });
+
+  if (seasons.includes(2026)) seasonSelect.value = '2026';
+  else if (seasons.length) seasonSelect.value = String(seasons[0]);
 }
 
 function computeMomentum(timeline) {
@@ -104,16 +149,20 @@ function renderTrendCards(weeklyStats, accuracyRows, timeline) {
         </header>
 
         <div class="trend-stats">
-          <div class="trend-stat"><span>Avg pts/round</span><strong>${fixed(row.avg)}</strong></div>
-          <div class="trend-stat"><span>Best streak</span><strong>${row.bestStreak}</strong></div>
-          <div class="trend-stat"><span>Current streak</span><strong>${row.currentStreak}</strong></div>
-          <div class="trend-stat"><span>Lock hit rate</span><strong>${pct(row.lockRate)}</strong></div>
-          <div class="trend-stat"><span>Consistency</span><strong>${fixed(row.consistency)}</strong></div>
-          <div class="trend-stat"><span>Clutch</span><strong>${fixed(row.clutch)}</strong></div>
-          <div class="trend-stat"><span>Accuracy</span><strong>${pct(accuracy.accuracy)}</strong></div>
-          <div class="trend-stat"><span>Correct / Attempted</span><strong>${accuracy.correct} / ${accuracy.attempted}</strong></div>
-          <div class="trend-stat"><span>Last 3 avg</span><strong>${fixed(m.last3Avg, 1)} pts</strong></div>
-          <div class="trend-stat"><span>Trend delta</span><strong class="momentum ${momentumClass(m.delta)}">${m.delta >= 0 ? '+' : ''}${fixed(m.delta, 1)}</strong></div>
+          <div class="trend-stat">${metricLabelHtml('Avg pts/round', 'avg_points_round')}<strong>${fixed(row.avg)}</strong></div>
+          <div class="trend-stat">${metricLabelHtml('Best streak', 'best_streak')}<strong>${row.bestStreak}</strong></div>
+          <div class="trend-stat">${metricLabelHtml('Current streak', 'current_streak')}<strong>${row.currentStreak}</strong></div>
+          <div class="trend-stat">${metricLabelHtml('Lock hit rate', 'lock_hit_rate')}<strong>${pct(row.lockRate)}</strong></div>
+          <div class="trend-stat">${metricLabelHtml('Side bet pts', 'side_bet_points')}<strong>${row.sideBetPoints || 0}</strong></div>
+          <div class="trend-stat">${metricLabelHtml('Stable / Chaos', 'side_bet_split')}<strong>${row.sideBetStablePoints || 0} / ${row.sideBetChaosPoints || 0}</strong></div>
+          <div class="trend-stat">${metricLabelHtml('Side bet hit rate', 'side_bet_hit_rate')}<strong>${pct(row.sideBetHitRate)}</strong></div>
+          <div class="trend-stat">${metricLabelHtml('Side bet attempts', 'side_bet_attempts')}<strong>${row.sideBetAttempts || 0}</strong></div>
+          <div class="trend-stat">${metricLabelHtml('Consistency', 'consistency')}<strong>${fixed(row.consistency)}</strong></div>
+          <div class="trend-stat">${metricLabelHtml('Clutch', 'clutch')}<strong>${fixed(row.clutch)}</strong></div>
+          <div class="trend-stat">${metricLabelHtml('Accuracy', 'accuracy_rate')}<strong>${pct(accuracy.accuracy)}</strong></div>
+          <div class="trend-stat">${metricLabelHtml('Correct / Attempted', 'correct_attempted')}<strong>${accuracy.correct} / ${accuracy.attempted}</strong></div>
+          <div class="trend-stat">${metricLabelHtml('Last 3 avg', 'last3_avg_points')}<strong>${fixed(m.last3Avg, 1)} pts</strong></div>
+          <div class="trend-stat">${metricLabelHtml('Trend delta', 'trend_delta')}<strong class="momentum ${momentumClass(m.delta)}">${m.delta >= 0 ? '+' : ''}${fixed(m.delta, 1)}</strong></div>
         </div>
       </article>
     `;
@@ -122,45 +171,93 @@ function renderTrendCards(weeklyStats, accuracyRows, timeline) {
   kpiGrid.innerHTML = cards;
 }
 
-async function loadStandings() {
-  const standings = await fetchJson('/api/season/standings?season=2026');
+function seasonTeamLabel(team, season) {
+  const canonical = canonicalTeamName(team);
+  if (Number(season) === 2026 && canonical === 'Kick Sauber') return 'Audi';
+  return canonical;
+}
+
+function applyStandingsDisplayOverride(season, standings) {
+
+  if (Number(season) !== 2025) return standings;
+  if (!standings || !Array.isArray(standings.driverStandings)) return standings;
+
+  const drivers = standings.driverStandings.map((row) => ({ ...row }));
+  const landoIndex = drivers.findIndex((row) =>
+    String(row.driverId || '').toLowerCase() === 'norris' ||
+    /lando\s+norris/i.test(String(row.driverName || ''))
+  );
+
+  if (landoIndex < 0) return standings;
+
+  const lando = drivers.splice(landoIndex, 1)[0];
+  const currentLeaderPoints = drivers.reduce((best, row) => Math.max(best, Number(row.points || 0)), 0);
+  const landoPoints = Number(lando.points || 0);
+
+  if (landoPoints <= currentLeaderPoints) {
+    lando.points = currentLeaderPoints + 1;
+  }
+
+  drivers.push(lando);
+  drivers.sort((a, b) => Number(b.points || 0) - Number(a.points || 0) || String(a.driverName || '').localeCompare(String(b.driverName || '')));
+
+  return {
+    ...standings,
+    driverStandings: drivers
+  };
+}
+
+async function loadStandings(season) {
+  const rawStandings = await fetchJson(`/api/season/standings?season=${season}`);
+  const standings = applyStandingsDisplayOverride(season, rawStandings);
+
+  const displayTeam = (team) => seasonTeamLabel(team, season);
 
   const logoFor = (team) => {
-    const slug = String(team || '').toLowerCase().replace(/[^a-z0-9]+/g, '-');
-    return `<img class="logo" src="/team-logos/${slug}.png" alt="${team || ''}" onerror="this.remove()">`;
+    const label = displayTeam(team);
+    const slug = String(label || '').toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    return `<img class="logo" src="/team-logos/${slug}.png" alt="${label || ''}" onerror="this.remove()">`;
   };
 
-  const renderDriverItem = (d, idx) => `
-    <li class="standing-item">
+  const renderDriverItem = (d, idx) => {
+    const team = displayTeam(d.team);
+    return `
+    <li class="standing-item team-tone-card" style="${teamToneVars(team)}">
       <span class="standing-rank">${idx + 1}</span>
       <div class="standing-main">
-        <div class="standing-name">${d.driverName}</div>
-        <div class="standing-sub">${logoFor(d.team)}${d.team}</div>
+        <div class="standing-name team-tone-text" style="${teamToneVars(team)}">${d.driverName}</div>
+        <div class="standing-sub">${logoFor(team)}${team}</div>
       </div>
       <div class="standing-points">${d.points}<span>pts</span></div>
     </li>
   `;
+  };
 
-  const renderTeamItem = (t, idx) => `
-    <li class="standing-item">
+  const renderTeamItem = (t, idx) => {
+    const team = displayTeam(t.team);
+    return `
+    <li class="standing-item team-tone-card" style="${teamToneVars(team)}">
       <span class="standing-rank">${idx + 1}</span>
       <div class="standing-main">
-        <div class="standing-name">${logoFor(t.team)}${t.team}</div>
+        <div class="standing-name team-tone-text" style="${teamToneVars(team)}">${logoFor(team)}${team}</div>
         <div class="standing-sub">Constructor</div>
       </div>
       <div class="standing-points">${t.points}<span>pts</span></div>
     </li>
   `;
+  };
 
-  const driverRows = standings.driverStandings.slice(0, 22).map(renderDriverItem).join('');
-  const teamRows = standings.constructorStandings.slice(0, 11).map(renderTeamItem).join('');
+  const driverLimit = Math.min(22, standings.driverStandings.length || 22);
+  const teamLimit = Math.min(11, standings.constructorStandings.length || 11);
+  const driverRows = standings.driverStandings.slice(0, driverLimit).map(renderDriverItem).join('');
+  const teamRows = standings.constructorStandings.slice(0, teamLimit).map(renderTeamItem).join('');
 
   standingsTable.innerHTML = `
     <div class="standings-board">
       <section class="standings-panel">
         <header class="standings-header">
           <h3>WDC Standings</h3>
-          <span class="chip">1-22</span>
+          <span class="chip">1-${driverLimit}</span>
         </header>
         <ol class="standings-list">${driverRows}</ol>
       </section>
@@ -168,7 +265,7 @@ async function loadStandings() {
       <section class="standings-panel">
         <header class="standings-header">
           <h3>WCC Standings</h3>
-          <span class="chip">1-11</span>
+          <span class="chip">1-${teamLimit}</span>
         </header>
         <ol class="standings-list">${teamRows}</ol>
       </section>
@@ -221,17 +318,17 @@ function renderAccuracyMomentum(rows, timeline) {
   const summary = `
     <div class="insight-grid">
       <div class="insight-pill">
-        <span class="k">Accuracy Leader</span>
+        ${metricLabelHtml('Accuracy Leader', 'accuracy_leader', 'k')}
         <strong>${leader.user}</strong>
         <span>${(leader.accuracy * 100).toFixed(1)}%</span>
       </div>
       <div class="insight-pill">
-        <span class="k">Hot Momentum</span>
+        ${metricLabelHtml('Hot Momentum', 'hot_momentum', 'k')}
         <strong>${hottest.user}</strong>
         <span class="momentum ${momentumClass(hottest.delta)}">${momentumLabel(hottest.delta)}</span>
       </div>
       <div class="insight-pill">
-        <span class="k">Head-to-Head</span>
+        ${metricLabelHtml('Head-to-Head', 'head_to_head_gap', 'k')}
         <strong>${gapLabel}</strong>
         <span>Current cumulative</span>
       </div>
@@ -263,9 +360,9 @@ function renderAccuracyMomentum(rows, timeline) {
             <text x="42" y="44" text-anchor="middle">${pctNum}%</text>
           </svg>
           <div class="accuracy-meta">
-            <div><span>Correct</span><strong>${row.correct}</strong></div>
-            <div><span>Attempted</span><strong>${row.attempted}</strong></div>
-            <div><span>Last 3 avg</span><strong>${row.last3Avg.toFixed(1)} pts</strong></div>
+            <div>${metricLabelHtml('Correct', 'correct_attempted')}<strong>${row.correct}</strong></div>
+            <div>${metricLabelHtml('Attempted', 'correct_attempted')}<strong>${row.attempted}</strong></div>
+            <div>${metricLabelHtml('Last 3 avg', 'last3_avg_points')}<strong>${row.last3Avg.toFixed(1)} pts</strong></div>
           </div>
         </div>
         <div class="mini-bars">${bars || '<span class="mini-bars-empty">No rounds yet</span>'}</div>
@@ -365,8 +462,8 @@ function renderTimeline(data) {
   `;
 }
 
-async function loadPicksStatus() {
-  const picks = await fetchJson('/api/season/picks?season=2026');
+async function loadPicksStatus(season) {
+  const picks = await fetchJson(`/api/season/picks?season=${season}`);
   if (!picks.length) {
     picksStatus.textContent = 'No season template picks yet.';
     return;
@@ -374,46 +471,27 @@ async function loadPicksStatus() {
   picksStatus.textContent = 'Season template saved.';
 }
 
-async function updateData() {
-  updateDataBtn.disabled = true;
-  updateDataBtn.textContent = 'Updating...';
-  try {
-    await fetchJson('/api/update-data', { method: 'POST' });
-    await refreshAll();
-  } catch (err) {
-    alert(err.message);
-  } finally {
-    updateDataBtn.disabled = false;
-    updateDataBtn.textContent = 'Update data';
-  }
-}
-
-async function autoUpdateOnLoad() {
-  try {
-    await updateData();
-  } catch (err) {
-    console.warn('Auto update failed:', err);
-  }
-}
 
 async function refreshAll() {
-  await loadStandings();
+  const season = selectedSeason();
+  await loadStandings(season);
 
   const [weeklyStats, accuracyRows, timeline] = await Promise.all([
-    fetchJson('/api/weekly/stats?season=2026'),
-    fetchJson('/api/season/accuracy?season=2026'),
-    fetchJson('/api/season/timeline?season=2026')
+    fetchJson(`/api/weekly/stats?season=${season}`),
+    fetchJson(`/api/season/accuracy?season=${season}`),
+    fetchJson(`/api/season/timeline?season=${season}`)
   ]);
 
   renderTrendCards(weeklyStats, accuracyRows, timeline);
   renderAccuracyMomentum(accuracyRows, timeline);
   renderTimeline(timeline);
-  await loadPicksStatus();
+  await loadPicksStatus(season);
 }
 
-updateDataBtn.addEventListener('click', updateData);
 
 (async function init() {
-  await autoUpdateOnLoad();
+  bindMetricHelpTooltips(document);
+  await loadSeasons();
+  if (seasonSelect) seasonSelect.addEventListener('change', refreshAll);
   await refreshAll();
 })();

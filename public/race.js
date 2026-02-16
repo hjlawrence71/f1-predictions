@@ -36,7 +36,7 @@ async function load() {
     `${raceName} (Round ${round}${race?.start_date ? `, ${race.start_date}` : ''})`;
 
   if (backToHistoricalBtn) {
-    backToHistoricalBtn.href = `/weekly-stats.html?round=${round}`;
+    backToHistoricalBtn.href = `/season.html?season=${season}&round=${round}#historicalSection`;
   }
 
   if (weekendSelect) {

@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Projection Lab</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script>document.documentElement.setAttribute('data-theme', localStorage.getItem('f1-theme') || 'light');</script>
+  </head>
+  <body class="projection-page">
+    <div class="page-max">
+      <button id="themeToggle" class="theme-switch" type="button" aria-label="Toggle theme" aria-pressed="false">
+        <span class="theme-icon sun" aria-hidden="true">☀</span>
+        <span class="theme-icon moon" aria-hidden="true">☾</span>
+        <span class="theme-knob" aria-hidden="true"></span>
+      </button>
+
+      <header class="app-header">
+        <div>
+          <div class="brand">
+            <img class="brand-mark" src="/assets/f1-logo.svg" alt="F1 logo" />
+            <span class="brand-title">Predictions</span>
+          </div>
+          <h1>Projection Lab</h1>
+        </div>
+        <div class="header-actions">
+          <a class="btn ghost" href="/index.html">Weekly picks</a>
+          <a class="btn ghost" href="/season.html">Season hub</a>
+          <a class="btn ghost" href="/driver-radar.html">Intelligence</a>
+          <a class="btn ghost active" aria-current="page" href="/projections.html">Projection Lab</a>
+          <a class="btn ghost" href="/template.html">Championship</a>
+        </div>
+      </header>
+
+      <section class="card projection-hero-card">
+        <div class="projection-hero-copy">
+          <h2>Projected Outcomes Engine</h2>
+          <p class="muted">Track-fit + tyre profile + teammate edge + reliability + momentum with deterministic simulation.</p>
+        </div>
+        <div class="projection-controls" id="projectionControls">
+          <label>
+            Season
+            <select id="projectionSeasonSelect"></select>
+          </label>
+          <label>
+            Round
+            <select id="projectionRoundSelect"></select>
+          </label>
+          <label>
+            User
+            <select id="projectionUserSelect"></select>
+          </label>
+          <button id="projectionRunBtn" class="btn" type="button">Run model</button>
+        </div>
+        <div id="projectionStatus" class="muted">Ready.</div>
+      </section>
+
+      <main class="projection-main-grid">
+        <section class="card projection-race-card">
+          <div class="projection-card-head">
+            <h3>Projected Race Grid</h3>
+            <span id="projectionRaceMeta" class="chip">No round loaded</span>
+          </div>
+          <div id="projectionRaceTable" class="projection-table-wrap"></div>
+        </section>
+
+        <section class="projection-side-stack">
+          <section class="card projection-track-card">
+            <div class="projection-card-head">
+              <h3>Track Profile</h3>
+              <span id="projectionTrackSource" class="chip">—</span>
+            </div>
+            <div id="projectionTrackProfile"></div>
+          </section>
+
+          <section class="card projection-picks-card">
+            <div class="projection-card-head">
+              <h3>Pick Hit Likelihood</h3>
+            </div>
+            <div id="projectionPickLikelihood"></div>
+          </section>
+
+          <section class="card projection-team-card">
+            <div class="projection-card-head">
+              <h3>Team Outlook</h3>
+            </div>
+            <div id="projectionTeamOutlook"></div>
+          </section>
+        </section>
+      </main>
+
+      <section class="card projection-breakdown-card">
+        <div class="projection-card-head">
+          <h3>Driver Model Breakdown</h3>
+          <label>
+            Driver
+            <select id="projectionDriverSelect"></select>
+          </label>
+        </div>
+        <div id="projectionDriverBreakdown" class="projection-breakdown"></div>
+      </section>
+
+      <section class="card projection-model-card">
+        <div class="projection-card-head">
+          <h3>Model Spec</h3>
+          <span id="projectionModelVersion" class="chip">—</span>
+        </div>
+        <div id="projectionModelSpec"></div>
+      </section>
+
+      <script src="/theme.js" type="module"></script>
+      <script src="/projections.js" type="module"></script>
+    </div>
+  </body>
+</html>

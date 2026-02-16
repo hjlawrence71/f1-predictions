@@ -1,20 +1,42 @@
+import { fillDriverSelect, sortDriversForDropdown, sortTeamsForDropdown } from './driver-order.js';
+
 const userSelect = document.getElementById('userSelect');
 const seasonSelect = document.getElementById('seasonSelect');
 const driverChampion = document.getElementById('driverChampion');
 const constructorChampion = document.getElementById('constructorChampion');
 const templateForm = document.getElementById('templateForm');
 const picksStatus = document.getElementById('picksStatus');
-const updateDataBtn = document.getElementById('updateDataBtn');
 const wdcGrid = document.getElementById('wdcGrid');
 const wccGrid = document.getElementById('wccGrid');
 
-async function fetchJson(url, options) {
-  const res = await fetch(url, options);
-  if (!res.ok) {
-    const msg = await res.text();
-    throw new Error(msg || `Request failed: ${res.status}`);
+async function fetchJson(url, options = {}, retries = 2) {
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 12000);
+
+    try {
+      const res = await fetch(url, { ...options, signal: controller.signal });
+      clearTimeout(timeout);
+
+      if (!res.ok) {
+        const msg = await res.text();
+        throw new Error(msg || `Request failed: ${res.status}`);
+      }
+
+      return res.json();
+    } catch (err) {
+      clearTimeout(timeout);
+      if (attempt >= retries) {
+        const message = err?.name === 'AbortError'
+          ? `Request timeout for ${url}`
+          : (err?.message || `Failed to fetch ${url}`);
+        throw new Error(message);
+      }
+      await new Promise(resolve => setTimeout(resolve, 300 * (attempt + 1)));
+    }
   }
-  return res.json();
+
+  throw new Error(`Failed to fetch ${url}`);
 }
 
 function option(label, value) {
@@ -49,24 +71,29 @@ async function loadConfig() {
 async function loadSeasons() {
   const seasons = await fetchJson('/api/seasons');
   seasonSelect.innerHTML = '';
-  seasons.forEach(s => seasonSelect.appendChild(option(String(s), s)));
+  seasons.forEach((s) => seasonSelect.appendChild(option(String(s), s)));
+
+  if (seasons.includes(2026)) {
+    seasonSelect.value = '2026';
+  } else if (seasons.length) {
+    seasonSelect.value = String(Math.max(...seasons.map(Number)));
+  }
 }
 
 async function loadDriverAndTeams() {
-  const drivers = await fetchJson('/api/drivers');
-  const teams = [...new Set(drivers.map(d => d.team))].sort();
+  const drivers = sortDriversForDropdown(await fetchJson('/api/drivers'));
+  const teams = sortTeamsForDropdown(drivers.map(d => d.team));
 
   driverChampion.innerHTML = '';
   constructorChampion.innerHTML = '';
 
-  driverChampion.appendChild(option('—', ''));
-  constructorChampion.appendChild(option('—', ''));
-
-  drivers.forEach(d => {
-    driverChampion.appendChild(option(`${d.driverName} — ${d.team}`, d.driverId));
+  fillDriverSelect(driverChampion, drivers, {
+    includeBlank: true,
+    includeTeamInOption: false
   });
 
-  teams.forEach(t => constructorChampion.appendChild(option(t, t)));
+  constructorChampion.appendChild(option('—', ''));
+  teams.forEach(t => constructorChampion.appendChild(option(t.label, t.value)));
 
   renderWdcWccInputs(drivers, teams);
   renderTemplateDropdowns(drivers, teams);
@@ -93,7 +120,7 @@ function renderWdcWccInputs(drivers, teams) {
     const select = document.createElement('select');
     select.id = `wcc_${i}`;
     select.appendChild(option('—', ''));
-    teams.forEach(t => select.appendChild(option(t, t)));
+    teams.forEach(t => select.appendChild(option(t.label, t.value)));
     label.appendChild(select);
     wccGrid.appendChild(label);
   }
@@ -107,8 +134,14 @@ function fillSelect(el, options, includeBlank = true) {
 
 function renderTemplateDropdowns(drivers, teams) {
   const driverOpts = drivers.map(d => ({ label: d.driverName, value: d.driverId }));
-  const teamOpts = teams.map(t => ({ label: t, value: t }));
+  const teamOpts = teams.map(t => ({ label: t.label, value: t.value }));
   const numberOpts = Array.from({ length: 40 }, (_, i) => ({ label: String(i + 1), value: String(i + 1) }));
+  const champWinsPolesOpts = Array.from({ length: 24 }, (_, i) => ({ label: String(i + 1), value: String(i + 1) }));
+  const titleMarginOpts = Array.from({ length: 150 }, (_, i) => ({ label: String(i + 1), value: String(i + 1) }));
+
+  fillSelect(document.getElementById('wdcWins'), champWinsPolesOpts, false);
+  fillSelect(document.getElementById('wdcPoles'), champWinsPolesOpts, false);
+  fillSelect(document.getElementById('wdcMargin'), titleMarginOpts, false);
 
   fillSelect(document.getElementById('boxPodium'), driverOpts);
   fillSelect(document.getElementById('boxImproved'), driverOpts);
@@ -301,27 +334,6 @@ async function saveTemplate(e) {
   await refreshAll();
 }
 
-async function updateData() {
-  updateDataBtn.disabled = true;
-  updateDataBtn.textContent = 'Updating...';
-  try {
-    await fetchJson('/api/update-data', { method: 'POST' });
-    await refreshAll();
-  } catch (err) {
-    alert(err.message);
-  } finally {
-    updateDataBtn.disabled = false;
-    updateDataBtn.textContent = 'Update data';
-  }
-}
-
-async function autoUpdateOnLoad() {
-  try {
-    await updateData();
-  } catch (err) {
-    console.warn('Auto update failed:', err);
-  }
-}
 
 async function refreshAll() {
   await loadDriverAndTeams();
@@ -334,11 +346,9 @@ async function refreshAll() {
 seasonSelect.addEventListener('change', refreshAll);
 userSelect.addEventListener('change', refreshAll);
 templateForm.addEventListener('submit', saveTemplate);
-updateDataBtn.addEventListener('click', updateData);
 
 (async function init() {
   await loadConfig();
   await loadSeasons();
-  await autoUpdateOnLoad();
   await refreshAll();
 })();

@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Year Long</title>
+    <title>Championship</title>
     <link rel="stylesheet" href="/styles.css" />
     <script>document.documentElement.setAttribute('data-theme', localStorage.getItem('f1-theme') || 'light');</script>
   </head>
@@ -20,19 +20,19 @@
           <img class="brand-mark" src="/assets/f1-logo.svg" alt="F1 logo" />
           <span class="brand-title">Predictions</span>
         </div>
-        <h1>Year Long</h1>
+        <h1>Championship</h1>
       </div>
       <div class="header-actions">
         <a class="btn ghost" href="/index.html">Weekly picks</a>
         <a class="btn ghost" href="/season.html">Season hub</a>
-        <a class="btn ghost" href="/weekly-stats.html">Historical</a>
-        <a class="btn ghost active" aria-current="page" href="/template.html">Year long</a>
-        <button id="updateDataBtn" class="btn">Update data</button>
+        <a class="btn ghost" href="/driver-radar.html">Intelligence</a>
+        <a class="btn ghost" href="/projections.html">Projection Lab</a>
+        <a class="btn ghost active" aria-current="page" href="/template.html">Championship</a>
       </div>
     </header>
 
     <section class="card">
-      <h2>Season Predictions Template</h2>
+      <h2>Championship</h2>
       <div class="controls">
         <label>
           User
@@ -77,9 +77,9 @@
         <div class="round-users">
           <div class="round-user">
             <strong>WDC bonus calls</strong>
-            <label>Champion’s total wins<input id="wdcWins" type="text" /></label>
-            <label>Champion’s total poles<input id="wdcPoles" type="text" /></label>
-            <label>Closest title margin (points)<input id="wdcMargin" type="text" /></label>
+            <label>Champion’s total wins<select id="wdcWins"></select></label>
+            <label>Champion’s total poles<select id="wdcPoles"></select></label>
+            <label>Title Margin (Closest without going over)<select id="wdcMargin"></select></label>
             <label>“Gets a win before ____ happens”<input id="wdcBefore" type="text" /></label>
           </div>
           <div class="round-user">
