@@ -12,6 +12,20 @@ const TEAM_COLORS = {
   'Cadillac': { primary: '#848689', secondary: '#1f262a' }
 };
 
+const TEAM_LOGO_SLUGS = {
+  'McLaren': 'mclaren',
+  'Mercedes': 'mercedes',
+  'Red Bull Racing': 'red-bull',
+  'Ferrari': 'ferrari',
+  'Williams': 'williams',
+  'Racing Bulls': 'racing-bulls',
+  'Aston Martin': 'aston-martin',
+  'Haas F1 Team': 'haas',
+  'Audi': 'audi',
+  'Alpine': 'alpine',
+  'Cadillac': 'cadillac'
+};
+
 const TEAM_ALIASES = new Map([
   ['mclaren', 'McLaren'],
   ['mclaren formula 1 team', 'McLaren'],
@@ -55,6 +69,15 @@ function normalizeTeamKey(team) {
 export function canonicalTeamName(team) {
   const key = normalizeTeamKey(team);
   return TEAM_ALIASES.get(key) || String(team || '').trim() || 'Unknown Team';
+}
+
+export function teamLogoSlug(team) {
+  const canonical = canonicalTeamName(team);
+  return TEAM_LOGO_SLUGS[canonical] || String(canonical || '').toLowerCase().replace(/[^a-z0-9]+/g, '-');
+}
+
+export function teamLogoPath(team) {
+  return `/team-logos/${teamLogoSlug(team)}.png`;
 }
 
 function parseHexToRgb(hex) {

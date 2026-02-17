@@ -1,5 +1,5 @@
 import { metricLabelHtml, bindMetricHelpTooltips } from './metric-help.js';
-import { teamToneVars, canonicalTeamName } from './team-colors.js';
+import { teamToneVars, canonicalTeamName, teamLogoPath } from './team-colors.js';
 const kpiGrid = document.getElementById('kpiGrid');
 const standingsTable = document.getElementById('standingsTable');
 const accuracyTable = document.getElementById('accuracyTable');
@@ -215,8 +215,7 @@ async function loadStandings(season) {
 
   const logoFor = (team) => {
     const label = displayTeam(team);
-    const slug = String(label || '').toLowerCase().replace(/[^a-z0-9]+/g, '-');
-    return `<img class="logo" src="/team-logos/${slug}.png" alt="${label || ''}" onerror="this.remove()">`;
+    return `<img class="logo" src="${teamLogoPath(label)}" alt="${label || ''}" onerror="this.remove()">`;
   };
 
   const renderDriverItem = (d, idx) => {

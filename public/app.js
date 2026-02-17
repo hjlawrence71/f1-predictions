@@ -1,6 +1,6 @@
 import { fillDriverSelect, sortDriversForDropdown } from './driver-order.js';
 import { bindMetricHelpTooltips } from './metric-help.js';
-import { teamToneVars } from './team-colors.js';
+import { teamToneVars, teamLogoPath } from './team-colors.js';
 
 const body = document.body;
 
@@ -325,8 +325,7 @@ function setStep(step) {
 }
 
 function logoFor(team) {
-  const slug = String(team || '').toLowerCase().replace(/[^a-z0-9]+/g, '-');
-  return `<img class="logo" src="/team-logos/${slug}.png" alt="" onerror="this.remove()">`;
+  return `<img class="logo" src="${teamLogoPath(team)}" alt="" onerror="this.remove()">`;
 }
 
 function trendLabel(formAvg) {

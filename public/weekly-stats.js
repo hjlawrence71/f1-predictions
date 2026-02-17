@@ -1,4 +1,4 @@
-import { teamToneVars } from './team-colors.js';
+import { teamToneVars, teamLogoPath } from './team-colors.js';
 const raceSelect = document.getElementById('raceSelect');
 const goRoundBtn = document.getElementById('goRoundBtn');
 const driverStats = document.getElementById('driverStats');
@@ -44,8 +44,7 @@ async function fetchJson(url, options = {}, retries = 2) {
 }
 
 function logoFor(team) {
-  const slug = String(team || '').toLowerCase().replace(/[^a-z0-9]+/g, '-');
-  return `<img class="logo" src="/team-logos/${slug}.png" alt="" onerror="this.remove()">`;
+  return `<img class="logo" src="${teamLogoPath(team)}" alt="" onerror="this.remove()">`;
 }
 
 function selectedSeason() {
