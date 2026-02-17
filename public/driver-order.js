@@ -8,31 +8,58 @@ const TEAM_DISPLAY_ORDER = [
   'Aston Martin',
   'Haas F1 Team',
   'Audi',
-  'Alpine'
+  'Alpine',
+  'Cadillac'
 ];
+
 
 const TEAM_ALIASES = new Map([
   ['mclaren', 'McLaren'],
+  ['mclaren formula 1 team', 'McLaren'],
+  ['mclaren mastercard f1 team', 'McLaren'],
+
   ['mercedes', 'Mercedes'],
+  ['mercedes amg petronas formula one team', 'Mercedes'],
+
   ['red bull', 'Red Bull Racing'],
   ['red bull racing', 'Red Bull Racing'],
+  ['oracle red bull racing', 'Red Bull Racing'],
+
   ['ferrari', 'Ferrari'],
+  ['scuderia ferrari', 'Ferrari'],
+  ['scuderia ferrari hp', 'Ferrari'],
+
   ['williams', 'Williams'],
+  ['williams racing', 'Williams'],
+  ['atlassian williams f1 team', 'Williams'],
+
   ['racing bulls', 'Racing Bulls'],
   ['rb', 'Racing Bulls'],
+  ['visa cash app racing bulls formula one team', 'Racing Bulls'],
+
   ['aston martin', 'Aston Martin'],
+  ['aston martin aramco formula one team', 'Aston Martin'],
+
   ['haas', 'Haas F1 Team'],
   ['haas f1 team', 'Haas F1 Team'],
   ['moneygram haas f1 team', 'Haas F1 Team'],
   ['tgr haas f1 team', 'Haas F1 Team'],
+
   ['kick sauber', 'Audi'],
   ['stake f1 team kick sauber', 'Audi'],
   ['stake sauber', 'Audi'],
   ['sauber', 'Audi'],
   ['audi', 'Audi'],
   ['audi revolut f1 team', 'Audi'],
-  ['alpine', 'Alpine']
+
+  ['alpine', 'Alpine'],
+  ['bwt alpine f1 team', 'Alpine'],
+  ['bwt alpine formula one team', 'Alpine'],
+
+  ['cadillac', 'Cadillac'],
+  ['cadillac formula 1 team', 'Cadillac']
 ]);
+
 
 function normalizeTeamKey(team) {
   return String(team || '')
