@@ -20,6 +20,10 @@ const SCHEDULE_FILE_RE = /^schedule_(\d{4})\.json$/;
 const OPENF1_BASE_URL = process.env.OPENF1_BASE_URL || 'https://api.openf1.org/v1';
 const OPENF1_TIMEOUT_PARSED = Number.parseInt(process.env.OPENF1_TIMEOUT_MS || '20000', 10);
 const OPENF1_TIMEOUT_MS = Number.isFinite(OPENF1_TIMEOUT_PARSED) ? OPENF1_TIMEOUT_PARSED : 20000;
+const PICKS_LOCK_TIME_ZONE = process.env.PICKS_LOCK_TIME_ZONE || 'America/Chicago';
+const PICKS_LOCK_DATE_OVERRIDES = {
+  2026: '2026-03-06'
+};
 
 const DRIVER_TEAM_ORDER_BY_SEASON = {
   2025: [
@@ -395,6 +399,52 @@ function loadSchedule() {
   return [...rowsByKey.values()]
     .filter((row) => row.start_date)
     .sort((a, b) => a.season - b.season || a.round - b.round);
+}
+
+
+function dateYmdInTimeZone(date = new Date(), timeZone = PICKS_LOCK_TIME_ZONE) {
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).formatToParts(date);
+
+    const byType = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    if (byType.year && byType.month && byType.day) {
+      return `${byType.year}-${byType.month}-${byType.day}`;
+    }
+  } catch {
+    // Fallback to UTC date if timezone conversion is unavailable.
+  }
+
+  return date.toISOString().slice(0, 10);
+}
+
+function seasonPickLockDate(season) {
+  const override = PICKS_LOCK_DATE_OVERRIDES[season] || PICKS_LOCK_DATE_OVERRIDES[String(season)];
+  if (override) return String(override).slice(0, 10);
+
+  const firstRace = loadSchedule()
+    .filter((row) => row.season === season && row.start_date)
+    .sort((a, b) => a.round - b.round)[0];
+
+  return firstRace ? firstRace.start_date : null;
+}
+
+function getSeasonPickLockStatus(season, now = new Date()) {
+  const lockDate = seasonPickLockDate(season);
+  const today = dateYmdInTimeZone(now, PICKS_LOCK_TIME_ZONE);
+  const locked = Boolean(lockDate && today >= lockDate);
+
+  return {
+    season,
+    locked,
+    lockDate,
+    today,
+    timezone: PICKS_LOCK_TIME_ZONE
+  };
 }
 
 function loadCurrentGrid(season = 2026) {
@@ -4078,6 +4128,11 @@ app.get('/api/season/picks', (req, res) => {
   res.json(picks);
 });
 
+app.get('/api/season/picks-lock', (req, res) => {
+  const season = requireSeason(req.query.season);
+  res.json(getSeasonPickLockStatus(season));
+});
+
 app.post('/api/season/picks', (req, res) => {
   const { user: userRaw, season: seasonRaw, picks, pin } = req.body || {};
   requireObject(picks, 'picks required');
@@ -4085,6 +4140,10 @@ app.post('/api/season/picks', (req, res) => {
   const cfg = loadConfig();
   const user = requireKnownUser(cfg, userRaw, pin);
   const season = requireSeason(seasonRaw);
+  const lockStatus = getSeasonPickLockStatus(season);
+  if (lockStatus.locked) {
+    throw fail(`Championship picks are locked for ${season} as of ${lockStatus.lockDate}.`, 423);
+  }
 
   const data = loadDb();
   const now = new Date().toISOString();

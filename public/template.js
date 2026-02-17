@@ -5,9 +5,12 @@ const seasonSelect = document.getElementById('seasonSelect');
 const driverChampion = document.getElementById('driverChampion');
 const constructorChampion = document.getElementById('constructorChampion');
 const templateForm = document.getElementById('templateForm');
+const saveTemplateBtn = templateForm?.querySelector('button[type="submit"]');
 const picksStatus = document.getElementById('picksStatus');
 const wdcGrid = document.getElementById('wdcGrid');
 const wccGrid = document.getElementById('wccGrid');
+
+let seasonLockState = { locked: false, lockDate: null, timezone: 'America/Chicago' };
 
 async function fetchJson(url, options = {}, retries = 2) {
   for (let attempt = 0; attempt <= retries; attempt += 1) {
@@ -37,6 +40,39 @@ async function fetchJson(url, options = {}, retries = 2) {
   }
 
   throw new Error(`Failed to fetch ${url}`);
+}
+
+function parseApiErrorMessage(err) {
+  const raw = String(err?.message || 'Request failed');
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed.error === 'string' && parsed.error.trim()) {
+      return parsed.error;
+    }
+  } catch {
+    // Keep raw message when body is plain text.
+  }
+  return raw;
+}
+
+function lockStatusLabel(lock) {
+  if (!lock?.lockDate) return 'Championship picks are locked.';
+  const tz = lock.timezone || 'local time';
+  return `Championship picks are locked as of ${lock.lockDate} (${tz}).`;
+}
+
+function applySeasonLock(lock) {
+  seasonLockState = lock || { locked: false, lockDate: null, timezone: 'America/Chicago' };
+  const locked = Boolean(seasonLockState.locked);
+
+  templateForm.querySelectorAll('input, select, textarea').forEach((el) => {
+    el.disabled = locked;
+  });
+
+  if (saveTemplateBtn) {
+    saveTemplateBtn.disabled = locked;
+    saveTemplateBtn.textContent = locked ? 'Locked' : 'Save full template';
+  }
 }
 
 function option(label, value) {
@@ -299,37 +335,64 @@ async function loadSeasonPicks() {
   return picks;
 }
 
+async function loadSeasonLock() {
+  const season = seasonSelect.value;
+  return fetchJson(`/api/season/picks-lock?season=${season}`);
+}
+
 function renderPicksStatus(picks) {
-  if (!picks.length) {
-    picksStatus.textContent = 'No season picks yet.';
+  const row = picks.find((p) => p.user === userSelect.value);
+
+  if (seasonLockState.locked) {
+    picksStatus.textContent = row
+      ? `Template loaded. ${lockStatusLabel(seasonLockState)}`
+      : lockStatusLabel(seasonLockState);
     return;
   }
-  const row = picks.find(p => p.user === userSelect.value);
+
   if (!row) {
     picksStatus.textContent = 'No season picks yet.';
     return;
   }
+
   picksStatus.textContent = 'Template loaded.';
 }
 
 async function saveTemplate(e) {
   e.preventDefault();
+
+  if (seasonLockState.locked) {
+    picksStatus.textContent = lockStatusLabel(seasonLockState);
+    return;
+  }
+
   const pin = await requirePin(userSelect.value);
   if (pin === null) return;
-  await fetchJson('/api/season/picks', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      user: userSelect.value,
-      season: Number(seasonSelect.value),
-      picks: {
-        driverChampion: driverChampion.value || null,
-        constructorChampion: constructorChampion.value || null,
-        ...collectTemplatePicks()
-      },
-      pin
-    })
-  });
+
+  try {
+    await fetchJson('/api/season/picks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        user: userSelect.value,
+        season: Number(seasonSelect.value),
+        picks: {
+          driverChampion: driverChampion.value || null,
+          constructorChampion: constructorChampion.value || null,
+          ...collectTemplatePicks()
+        },
+        pin
+      })
+    });
+  } catch (err) {
+    const message = parseApiErrorMessage(err);
+    picksStatus.textContent = message;
+    if (/locked/i.test(message)) {
+      seasonLockState = { ...seasonLockState, locked: true };
+      applySeasonLock(seasonLockState);
+    }
+    return;
+  }
 
   await refreshAll();
 }
@@ -337,10 +400,11 @@ async function saveTemplate(e) {
 
 async function refreshAll() {
   await loadDriverAndTeams();
-  const picks = await loadSeasonPicks();
-  renderPicksStatus(picks);
-  const userPick = picks.find(p => p.user === userSelect.value);
+  const [picks, lock] = await Promise.all([loadSeasonPicks(), loadSeasonLock()]);
+  applySeasonLock(lock);
+  const userPick = picks.find((p) => p.user === userSelect.value);
   applyTemplatePicks(userPick);
+  renderPicksStatus(picks);
 }
 
 seasonSelect.addEventListener('change', refreshAll);
