@@ -10,7 +10,12 @@ const picksStatus = document.getElementById('picksStatus');
 const wdcGrid = document.getElementById('wdcGrid');
 const wccGrid = document.getElementById('wccGrid');
 
+const WDC_SIZE = 22;
+const WCC_SIZE = 11;
+
 let seasonLockState = { locked: false, lockDate: null, timezone: 'America/Chicago' };
+let wdcBaseOptions = [];
+let wccBaseOptions = [];
 
 async function fetchJson(url, options = {}, retries = 2) {
   for (let attempt = 0; attempt <= retries; attempt += 1) {
@@ -82,6 +87,43 @@ function option(label, value) {
   return opt;
 }
 
+function rebuildRankChain(prefix, size, baseOptions) {
+  const used = new Set();
+
+  for (let i = 1; i <= size; i += 1) {
+    const select = document.getElementById(`${prefix}_${i}`);
+    if (!select) continue;
+
+    const current = select.value;
+    const available = baseOptions.filter((opt) => !used.has(opt.value) || opt.value === current);
+
+    select.innerHTML = '';
+    select.appendChild(option('—', ''));
+    available.forEach((opt) => select.appendChild(option(opt.label, opt.value)));
+
+    if (current && available.some((opt) => opt.value === current)) {
+      select.value = current;
+    } else {
+      select.value = '';
+    }
+
+    if (select.value) used.add(select.value);
+  }
+}
+
+function enforceUniqueRankChains() {
+  rebuildRankChain('wdc', WDC_SIZE, wdcBaseOptions);
+  rebuildRankChain('wcc', WCC_SIZE, wccBaseOptions);
+}
+
+function bindRankChainListeners(prefix, size, baseOptions) {
+  for (let i = 1; i <= size; i += 1) {
+    const select = document.getElementById(`${prefix}_${i}`);
+    if (!select) continue;
+    select.addEventListener('change', () => rebuildRankChain(prefix, size, baseOptions));
+  }
+}
+
 function getSavedPin(user) {
   return localStorage.getItem(`pin:${user}`) || '';
 }
@@ -139,27 +181,34 @@ function renderWdcWccInputs(drivers, teams) {
   wdcGrid.innerHTML = '<strong>WDC — 1 to 22</strong>';
   wccGrid.innerHTML = '<strong>WCC — 1 to 11</strong>';
 
-  for (let i = 1; i <= 22; i += 1) {
+  wdcBaseOptions = drivers.map((d) => ({ label: d.driverName, value: d.driverId }));
+  wccBaseOptions = teams.map((t) => ({ label: t.label, value: t.value }));
+
+  for (let i = 1; i <= WDC_SIZE; i += 1) {
     const label = document.createElement('label');
     label.textContent = `P${i}`;
     const select = document.createElement('select');
     select.id = `wdc_${i}`;
     select.appendChild(option('—', ''));
-    drivers.forEach(d => select.appendChild(option(d.driverName, d.driverId)));
+    wdcBaseOptions.forEach((entry) => select.appendChild(option(entry.label, entry.value)));
     label.appendChild(select);
     wdcGrid.appendChild(label);
   }
 
-  for (let i = 1; i <= 11; i += 1) {
+  for (let i = 1; i <= WCC_SIZE; i += 1) {
     const label = document.createElement('label');
     label.textContent = `P${i}`;
     const select = document.createElement('select');
     select.id = `wcc_${i}`;
     select.appendChild(option('—', ''));
-    teams.forEach(t => select.appendChild(option(t.label, t.value)));
+    wccBaseOptions.forEach((entry) => select.appendChild(option(entry.label, entry.value)));
     label.appendChild(select);
     wccGrid.appendChild(label);
   }
+
+  bindRankChainListeners('wdc', WDC_SIZE, wdcBaseOptions);
+  bindRankChainListeners('wcc', WCC_SIZE, wccBaseOptions);
+  enforceUniqueRankChains();
 }
 
 function fillSelect(el, options, includeBlank = true) {
@@ -213,12 +262,12 @@ function renderTemplateDropdowns(drivers, teams) {
 
 function collectTemplatePicks() {
   const wdcOrder = [];
-  for (let i = 1; i <= 22; i += 1) {
+  for (let i = 1; i <= WDC_SIZE; i += 1) {
     const val = document.getElementById(`wdc_${i}`)?.value || '';
     wdcOrder.push(val || null);
   }
   const wccOrder = [];
-  for (let i = 1; i <= 11; i += 1) {
+  for (let i = 1; i <= WCC_SIZE; i += 1) {
     const val = document.getElementById(`wcc_${i}`)?.value || '';
     wccOrder.push(val || null);
   }
@@ -276,7 +325,10 @@ function collectTemplatePicks() {
 }
 
 function applyTemplatePicks(pick) {
-  if (!pick) return;
+  if (!pick) {
+    enforceUniqueRankChains();
+    return;
+  }
   (pick.wdc_order || []).forEach((val, idx) => {
     const el = document.getElementById(`wdc_${idx + 1}`);
     if (el) el.value = val || '';
@@ -285,6 +337,7 @@ function applyTemplatePicks(pick) {
     const el = document.getElementById(`wcc_${idx + 1}`);
     if (el) el.value = val || '';
   });
+  enforceUniqueRankChains();
 
   const wdc = pick.wdc_bonus || {};
   document.getElementById('wdcWins').value = wdc.wins || '';
