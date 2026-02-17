@@ -6,14 +6,24 @@ const driverChampion = document.getElementById('driverChampion');
 const constructorChampion = document.getElementById('constructorChampion');
 const templateForm = document.getElementById('templateForm');
 const saveTemplateBtn = templateForm?.querySelector('button[type="submit"]');
+const clearTemplateBtn = document.getElementById('clearTemplateBtn');
+const autofillLabBtn = document.getElementById('autofillLabBtn');
 const picksStatus = document.getElementById('picksStatus');
 const wdcGrid = document.getElementById('wdcGrid');
 const wccGrid = document.getElementById('wccGrid');
+const templateEditorDetails = document.getElementById('templateEditorDetails');
+const templateCompareGrid = document.getElementById('templateCompareGrid');
+const templateCompareStatus = document.getElementById('templateCompareStatus');
 
 const WDC_SIZE = 22;
 const WCC_SIZE = 11;
 
 let seasonLockState = { locked: false, lockDate: null, timezone: 'America/Chicago' };
+let configuredUsers = [];
+let driversCache = [];
+let teamsCache = [];
+let driverNameById = new Map();
+let teamLabelByValue = new Map();
 let wdcBaseOptions = [];
 let wccBaseOptions = [];
 
@@ -51,13 +61,34 @@ function parseApiErrorMessage(err) {
   const raw = String(err?.message || 'Request failed');
   try {
     const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed.error === 'string' && parsed.error.trim()) {
-      return parsed.error;
-    }
+    if (parsed && typeof parsed.error === 'string' && parsed.error.trim()) return parsed.error;
   } catch {
-    // Keep raw message when body is plain text.
+    // Keep raw text when response body is not JSON.
   }
   return raw;
+}
+
+function option(label, value) {
+  const opt = document.createElement('option');
+  opt.value = value;
+  opt.textContent = label;
+  return opt;
+}
+
+function selectedSeason() {
+  return Number(seasonSelect?.value || 2026);
+}
+
+function getSavedPin(user) {
+  return localStorage.getItem(`pin:${user}`) || '';
+}
+
+async function requirePin(user) {
+  const saved = getSavedPin(user);
+  const pin = window.prompt(`Enter PIN for ${user}`, saved || '');
+  if (pin === null) return null;
+  localStorage.setItem(`pin:${user}`, pin);
+  return pin;
 }
 
 function lockStatusLabel(lock) {
@@ -70,21 +101,56 @@ function applySeasonLock(lock) {
   seasonLockState = lock || { locked: false, lockDate: null, timezone: 'America/Chicago' };
   const locked = Boolean(seasonLockState.locked);
 
-  templateForm.querySelectorAll('input, select, textarea').forEach((el) => {
+  templateForm?.querySelectorAll('input, select, textarea').forEach((el) => {
     el.disabled = locked;
   });
+
+  if (userSelect) userSelect.disabled = locked;
 
   if (saveTemplateBtn) {
     saveTemplateBtn.disabled = locked;
     saveTemplateBtn.textContent = locked ? 'Locked' : 'Save full template';
   }
+
+  if (clearTemplateBtn) clearTemplateBtn.disabled = locked;
+  if (autofillLabBtn) autofillLabBtn.disabled = locked;
+
+  if (templateEditorDetails) {
+    templateEditorDetails.hidden = locked;
+    if (locked) templateEditorDetails.open = false;
+  }
 }
 
-function option(label, value) {
-  const opt = document.createElement('option');
-  opt.value = value;
-  opt.textContent = label;
-  return opt;
+function escapeHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function readableDriver(value) {
+  if (!value) return '—';
+  return driverNameById.get(value)?.driverName || String(value);
+}
+
+function readableTeam(value) {
+  if (!value) return '—';
+  return teamLabelByValue.get(value) || String(value);
+}
+
+function applyRookieDefault() {
+  const rookie = driversCache.find((d) => String(d.driverName || '').toLowerCase().includes('lindblad'));
+  const rookieSelect = document.getElementById('boxRookie');
+  if (rookie && rookieSelect && !rookieSelect.value) rookieSelect.value = rookie.driverId;
+}
+
+function fillSelect(el, options, includeBlank = true) {
+  if (!el) return;
+  el.innerHTML = '';
+  if (includeBlank) el.appendChild(option('—', ''));
+  options.forEach((o) => el.appendChild(option(o.label, o.value)));
 }
 
 function rebuildRankChain(prefix, size, baseOptions) {
@@ -124,26 +190,48 @@ function bindRankChainListeners(prefix, size, baseOptions) {
   }
 }
 
-function getSavedPin(user) {
-  return localStorage.getItem(`pin:${user}`) || '';
-}
+function clearTemplateForm() {
+  if (driverChampion) driverChampion.value = '';
+  if (constructorChampion) constructorChampion.value = '';
 
-async function requirePin(user) {
-  const saved = getSavedPin(user);
-  const pin = window.prompt(`Enter PIN for ${user}`, saved || '');
-  if (pin === null) return null;
-  localStorage.setItem(`pin:${user}`, pin);
-  return pin;
+  for (let i = 1; i <= WDC_SIZE; i += 1) {
+    const el = document.getElementById(`wdc_${i}`);
+    if (el) el.value = '';
+  }
+
+  for (let i = 1; i <= WCC_SIZE; i += 1) {
+    const el = document.getElementById(`wcc_${i}`);
+    if (el) el.value = '';
+  }
+
+  [
+    'wdcWins', 'wdcPoles', 'wdcMargin', 'wdcBefore',
+    'wccMargin', 'wccOver', 'wccUnder',
+    'boxPodium', 'boxImproved', 'boxRookie', 'boxWet', 'boxMeme',
+    'chaosTP', 'chaosSwap', 'chaosUpgrade', 'chaosWeekend', 'chaosQuote',
+    'brainNails', 'brainWrong', 'brainBestStrat', 'brainWorstStrat',
+    'bingoWinners', 'bingoPodiums', 'bingoSC', 'bingoRF',
+    'curseUnlucky', 'curseLucky', 'curseRakes'
+  ].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+
+  enforceUniqueRankChains();
+  applyRookieDefault();
 }
 
 async function loadConfig() {
   const config = await fetchJson('/api/config');
+  configuredUsers = (config.users || []).map((name) => String(name || '').trim()).filter(Boolean);
+
   userSelect.innerHTML = '';
   userSelect.appendChild(option('Select user', ''));
-  config.users.forEach(u => {
-    const name = typeof u === 'string' ? u : u?.name;
-    if (name) userSelect.appendChild(option(name, name));
-  });
+  configuredUsers.forEach((name) => userSelect.appendChild(option(name, name)));
+
+  if (!userSelect.value && configuredUsers.length) {
+    userSelect.value = configuredUsers[0];
+  }
 }
 
 async function loadSeasons() {
@@ -156,25 +244,6 @@ async function loadSeasons() {
   } else if (seasons.length) {
     seasonSelect.value = String(Math.max(...seasons.map(Number)));
   }
-}
-
-async function loadDriverAndTeams() {
-  const drivers = sortDriversForDropdown(await fetchJson('/api/drivers'));
-  const teams = sortTeamsForDropdown(drivers.map(d => d.team));
-
-  driverChampion.innerHTML = '';
-  constructorChampion.innerHTML = '';
-
-  fillDriverSelect(driverChampion, drivers, {
-    includeBlank: true,
-    includeTeamInOption: false
-  });
-
-  constructorChampion.appendChild(option('—', ''));
-  teams.forEach(t => constructorChampion.appendChild(option(t.label, t.value)));
-
-  renderWdcWccInputs(drivers, teams);
-  renderTemplateDropdowns(drivers, teams);
 }
 
 function renderWdcWccInputs(drivers, teams) {
@@ -211,15 +280,9 @@ function renderWdcWccInputs(drivers, teams) {
   enforceUniqueRankChains();
 }
 
-function fillSelect(el, options, includeBlank = true) {
-  el.innerHTML = '';
-  if (includeBlank) el.appendChild(option('—', ''));
-  options.forEach(o => el.appendChild(option(o.label, o.value)));
-}
-
 function renderTemplateDropdowns(drivers, teams) {
-  const driverOpts = drivers.map(d => ({ label: d.driverName, value: d.driverId }));
-  const teamOpts = teams.map(t => ({ label: t.label, value: t.value }));
+  const driverOpts = drivers.map((d) => ({ label: d.driverName, value: d.driverId }));
+  const teamOpts = teams.map((t) => ({ label: t.label, value: t.value }));
   const numberOpts = Array.from({ length: 40 }, (_, i) => ({ label: String(i + 1), value: String(i + 1) }));
   const champWinsPolesOpts = Array.from({ length: 24 }, (_, i) => ({ label: String(i + 1), value: String(i + 1) }));
   const titleMarginOpts = Array.from({ length: 150 }, (_, i) => ({ label: String(i + 1), value: String(i + 1) }));
@@ -247,17 +310,42 @@ function renderTemplateDropdowns(drivers, teams) {
   fillSelect(document.getElementById('bingoSC'), numberOpts, false);
   fillSelect(document.getElementById('bingoRF'), numberOpts, false);
 
-  // Dominant team wins by points (1-40)
   fillSelect(document.getElementById('wccMargin'), numberOpts, false);
 
-  // Curses & Blessings (drivers)
   fillSelect(document.getElementById('curseUnlucky'), driverOpts);
   fillSelect(document.getElementById('curseLucky'), driverOpts);
   fillSelect(document.getElementById('curseRakes'), driverOpts);
 
-  // Auto-fill rookie moment as Lindblad if present
-  const lindblad = drivers.find(d => d.driverName.toLowerCase().includes('lindblad'));
-  if (lindblad) document.getElementById('boxRookie').value = lindblad.driverId;
+  applyRookieDefault();
+}
+
+async function loadDriverAndTeams() {
+  const season = selectedSeason();
+  const drivers = sortDriversForDropdown(await fetchJson(`/api/drivers?season=${season}`));
+  const teams = sortTeamsForDropdown(drivers.map((d) => d.team));
+
+  driversCache = drivers;
+  teamsCache = teams;
+  driverNameById = new Map(drivers.map((d) => [d.driverId, d]));
+  teamLabelByValue = new Map();
+  teams.forEach((t) => {
+    teamLabelByValue.set(t.value, t.label);
+    teamLabelByValue.set(t.label, t.label);
+  });
+
+  driverChampion.innerHTML = '';
+  constructorChampion.innerHTML = '';
+
+  fillDriverSelect(driverChampion, drivers, {
+    includeBlank: true,
+    includeTeamInOption: false
+  });
+
+  constructorChampion.appendChild(option('—', ''));
+  teams.forEach((t) => constructorChampion.appendChild(option(t.label, t.value)));
+
+  renderWdcWccInputs(drivers, teams);
+  renderTemplateDropdowns(drivers, teams);
 }
 
 function collectTemplatePicks() {
@@ -266,6 +354,7 @@ function collectTemplatePicks() {
     const val = document.getElementById(`wdc_${i}`)?.value || '';
     wdcOrder.push(val || null);
   }
+
   const wccOrder = [];
   for (let i = 1; i <= WCC_SIZE; i += 1) {
     const val = document.getElementById(`wcc_${i}`)?.value || '';
@@ -325,18 +414,22 @@ function collectTemplatePicks() {
 }
 
 function applyTemplatePicks(pick) {
-  if (!pick) {
-    enforceUniqueRankChains();
-    return;
-  }
+  clearTemplateForm();
+  if (!pick) return;
+
+  driverChampion.value = pick.driver_champion_id || '';
+  constructorChampion.value = pick.constructor_champion || '';
+
   (pick.wdc_order || []).forEach((val, idx) => {
     const el = document.getElementById(`wdc_${idx + 1}`);
     if (el) el.value = val || '';
   });
+
   (pick.wcc_order || []).forEach((val, idx) => {
     const el = document.getElementById(`wcc_${idx + 1}`);
     if (el) el.value = val || '';
   });
+
   enforceUniqueRankChains();
 
   const wdc = pick.wdc_bonus || {};
@@ -383,14 +476,124 @@ function applyTemplatePicks(pick) {
 }
 
 async function loadSeasonPicks() {
-  const season = seasonSelect.value;
-  const picks = await fetchJson(`/api/season/picks?season=${season}`);
-  return picks;
+  return fetchJson(`/api/season/picks?season=${selectedSeason()}`);
 }
 
 async function loadSeasonLock() {
-  const season = seasonSelect.value;
-  return fetchJson(`/api/season/picks-lock?season=${season}`);
+  return fetchJson(`/api/season/picks-lock?season=${selectedSeason()}`);
+}
+
+function countFilledValues(value) {
+  if (Array.isArray(value)) return value.reduce((sum, item) => sum + countFilledValues(item), 0);
+  if (value && typeof value === 'object') return Object.values(value).reduce((sum, item) => sum + countFilledValues(item), 0);
+  if (value === null || value === undefined) return 0;
+  if (typeof value === 'string' && value.trim() === '') return 0;
+  return 1;
+}
+
+function rankingHtml(items, type) {
+  const filtered = (items || []).filter(Boolean);
+  if (!filtered.length) return '<div class="muted">No picks</div>';
+
+  const rows = filtered.map((value, idx) => {
+    const label = type === 'team' ? readableTeam(value) : readableDriver(value);
+    return `<li><span class="eyebrow">P${idx + 1}</span><strong>${escapeHtml(label)}</strong></li>`;
+  }).join('');
+
+  return `<ol class="template-compare-list">${rows}</ol>`;
+}
+
+function detailLine(label, value, type = 'text') {
+  let display = '—';
+  if (value) {
+    if (type === 'driver') display = readableDriver(value);
+    else if (type === 'team') display = readableTeam(value);
+    else display = String(value);
+  }
+  return `<div><span class="eyebrow">${escapeHtml(label)}</span><strong>${escapeHtml(display)}</strong></div>`;
+}
+
+function renderCompare(picks) {
+  const users = configuredUsers.length
+    ? configuredUsers
+    : [...new Set((picks || []).map((row) => row.user).filter(Boolean))];
+
+  const rowsByUser = new Map((picks || []).map((row) => [row.user, row]));
+  const savedCount = users.filter((user) => rowsByUser.has(user)).length;
+  const lockLabel = seasonLockState.locked
+    ? `Locked ${seasonLockState.lockDate || ''}`.trim()
+    : 'Editable';
+
+  if (templateCompareStatus) {
+    templateCompareStatus.textContent = `${lockLabel} · ${savedCount}/${users.length || 0} users saved`;
+  }
+
+  if (!templateCompareGrid) return;
+
+  templateCompareGrid.innerHTML = users.map((user) => {
+    const row = rowsByUser.get(user);
+    if (!row) {
+      return `
+        <article class="template-compare-user empty">
+          <header>
+            <h3>${escapeHtml(user)}</h3>
+            <span class="chip">No picks</span>
+          </header>
+          <div class="muted">No championship picks saved yet.</div>
+        </article>
+      `;
+    }
+
+    const filledCount = countFilledValues({
+      driverChampion: row.driver_champion_id,
+      constructorChampion: row.constructor_champion,
+      wdcOrder: row.wdc_order || [],
+      wccOrder: row.wcc_order || [],
+      wdcBonus: row.wdc_bonus || {},
+      wccBonus: row.wcc_bonus || {},
+      outOfBox: row.out_of_box || {},
+      chaos: row.chaos || {},
+      bigBrain: row.big_brain || {},
+      bingo: row.bingo || {},
+      curses: row.curses || {}
+    });
+
+    const out = row.out_of_box || {};
+    const chaos = row.chaos || {};
+
+    return `
+      <article class="template-compare-user">
+        <header>
+          <h3>${escapeHtml(user)}</h3>
+          <span class="chip">${filledCount} fields</span>
+        </header>
+
+        <div class="template-compare-block">
+          ${detailLine('Driver Champion', row.driver_champion_id, 'driver')}
+          ${detailLine('Constructor Champion', row.constructor_champion, 'team')}
+        </div>
+
+        <div class="template-compare-block">
+          <span class="eyebrow">WDC Top 5</span>
+          ${rankingHtml((row.wdc_order || []).slice(0, 5), 'driver')}
+        </div>
+
+        <div class="template-compare-block">
+          <span class="eyebrow">WCC Top 5</span>
+          ${rankingHtml((row.wcc_order || []).slice(0, 5), 'team')}
+        </div>
+
+        <div class="template-compare-block">
+          ${detailLine('Unexpected Podium', out.podium, 'driver')}
+          ${detailLine('Most Improved', out.improved, 'driver')}
+          ${detailLine('Rookie Moment', out.rookie, 'driver')}
+          ${detailLine('Best Wet Drive', out.wet, 'driver')}
+          ${detailLine('First TP Firing', chaos.tp || '')}
+          ${detailLine('First Driver Swap', chaos.swap || '')}
+        </div>
+      </article>
+    `;
+  }).join('');
 }
 
 function renderPicksStatus(picks) {
@@ -414,6 +617,11 @@ function renderPicksStatus(picks) {
 async function saveTemplate(e) {
   e.preventDefault();
 
+  if (!userSelect.value) {
+    picksStatus.textContent = 'Select user first.';
+    return;
+  }
+
   if (seasonLockState.locked) {
     picksStatus.textContent = lockStatusLabel(seasonLockState);
     return;
@@ -428,7 +636,7 @@ async function saveTemplate(e) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         user: userSelect.value,
-        season: Number(seasonSelect.value),
+        season: selectedSeason(),
         picks: {
           driverChampion: driverChampion.value || null,
           constructorChampion: constructorChampion.value || null,
@@ -450,19 +658,53 @@ async function saveTemplate(e) {
   await refreshAll();
 }
 
+function clearCurrentForm() {
+  if (seasonLockState.locked) {
+    picksStatus.textContent = lockStatusLabel(seasonLockState);
+    return;
+  }
+
+  clearTemplateForm();
+  picksStatus.textContent = 'Form cleared. Save to replace existing picks.';
+}
+
+async function loadAutofillDemo() {
+  if (seasonLockState.locked) {
+    picksStatus.textContent = lockStatusLabel(seasonLockState);
+    return;
+  }
+
+  try {
+    const payload = await fetchJson('/api/demo/season-picks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ season: selectedSeason() })
+    });
+
+    const seededCount = Array.isArray(payload.seededUsers) ? payload.seededUsers.length : 0;
+    picksStatus.textContent = `Demo picks loaded for ${seededCount} users.`;
+    await refreshAll();
+  } catch (err) {
+    picksStatus.textContent = parseApiErrorMessage(err);
+  }
+}
 
 async function refreshAll() {
   await loadDriverAndTeams();
   const [picks, lock] = await Promise.all([loadSeasonPicks(), loadSeasonLock()]);
   applySeasonLock(lock);
+
   const userPick = picks.find((p) => p.user === userSelect.value);
   applyTemplatePicks(userPick);
   renderPicksStatus(picks);
+  renderCompare(picks);
 }
 
 seasonSelect.addEventListener('change', refreshAll);
 userSelect.addEventListener('change', refreshAll);
 templateForm.addEventListener('submit', saveTemplate);
+if (clearTemplateBtn) clearTemplateBtn.addEventListener('click', clearCurrentForm);
+if (autofillLabBtn) autofillLabBtn.addEventListener('click', loadAutofillDemo);
 
 (async function init() {
   await loadConfig();

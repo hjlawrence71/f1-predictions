@@ -33,117 +33,135 @@
 
     <section class="card">
       <h2>Championship</h2>
-      <div class="controls">
-        <label>
-          User
-          <select id="userSelect"></select>
-        </label>
-        <label>
-          Season
-          <select id="seasonSelect"></select>
-        </label>
+
+      <div class="template-compare-head">
+        <h3>Locked Compare</h3>
+        <div class="template-compare-toolbar">
+          <label class="template-season-control">
+            Season
+            <select id="seasonSelect"></select>
+          </label>
+          <span id="templateCompareStatus" class="chip">No picks loaded</span>
+        </div>
       </div>
-      <form id="templateForm">
-        <div class="round-users">
-          <div class="round-user">
-            <strong>Champion Picks</strong>
+      <div id="templateCompareGrid" class="template-compare-grid"></div>
+
+      <details id="templateEditorDetails" class="template-editor-shell">
+        <summary>Select / Edit Picks</summary>
+        <div class="template-editor-inner">
+          <div class="controls">
             <label>
-              Driver Champion
-              <select id="driverChampion"></select>
+              User
+              <select id="userSelect"></select>
             </label>
-            <label>
-              Constructor Champion
-              <select id="constructorChampion"></select>
-            </label>
-            <div id="picksStatus" class="pred-results"></div>
           </div>
-          <div class="round-user">
-            <strong>Scoring</strong>
-            <div class="muted">Exact WDC place: 5 pts</div>
-            <div class="muted">Within 1 place: 3 pts</div>
-            <div class="muted">Within 3 places: 1 pt</div>
-            <div class="muted">Exact WCC place: 6 pts</div>
-            <div class="muted">Nailed an out‑of‑box prediction: 4 pts</div>
-            <div class="muted">Called a driver swap / TP change: 10 pts</div>
-          </div>
+          <form id="templateForm">
+            <div class="round-users">
+              <div class="round-user">
+                <strong>Champion Picks</strong>
+                <label>
+                  Driver Champion
+                  <select id="driverChampion"></select>
+                </label>
+                <label>
+                  Constructor Champion
+                  <select id="constructorChampion"></select>
+                </label>
+                <div id="picksStatus" class="pred-results"></div>
+              </div>
+              <div class="round-user">
+                <strong>Scoring</strong>
+                <div class="muted">Exact WDC place: 5 pts</div>
+                <div class="muted">Within 1 place: 3 pts</div>
+                <div class="muted">Within 3 places: 1 pt</div>
+                <div class="muted">Exact WCC place: 6 pts</div>
+                <div class="muted">Nailed an out‑of‑box prediction: 4 pts</div>
+                <div class="muted">Called a driver swap / TP change: 10 pts</div>
+              </div>
+            </div>
+            <div style="height:16px;"></div>
+            <div class="round-users">
+              <div id="wdcGrid" class="round-user"></div>
+              <div id="wccGrid" class="round-user"></div>
+            </div>
+            <div style="height:16px;"></div>
+
+            <div class="round-users">
+              <div class="round-user">
+                <strong>WDC bonus calls</strong>
+                <label>Champion’s total wins<select id="wdcWins"></select></label>
+                <label>Champion’s total poles<select id="wdcPoles"></select></label>
+                <label>Title Margin (Closest without going over)<select id="wdcMargin"></select></label>
+                <label>“Gets a win before ____ happens”<input id="wdcBefore" type="text" /></label>
+              </div>
+              <div class="round-user">
+                <strong>WCC bonus calls</strong>
+                <label>Dominant team wins by (points)<select id="wccMargin"></select></label>
+                <label>Biggest overperformer team<select id="wccOver"></select></label>
+                <label>Biggest underperformer team<select id="wccUnder"></select></label>
+              </div>
+            </div>
+
+            <div style="height:16px;"></div>
+
+            <div class="round-users">
+              <div class="round-user">
+                <strong>Out-of-the-box</strong>
+                <label>Unexpected podium finisher<select id="boxPodium"></select></label>
+                <label>Most improved driver vs 2025<select id="boxImproved"></select></label>
+                <label>Rookie moment of the year<select id="boxRookie"></select></label>
+                <label>Best wet-weather drive<select id="boxWet"></select></label>
+                <label>Top driver meme<input id="boxMeme" type="text" /></label>
+              </div>
+              <div class="round-user">
+                <strong>Chaos & Headlines</strong>
+                <label>First team principal firing<input id="chaosTP" type="text" /></label>
+                <label>First driver swap (mid-season)<input id="chaosSwap" type="text" /></label>
+                <label>First major upgrade that changes everything (team)<select id="chaosUpgrade"></select></label>
+                <label>Most chaotic weekend<input id="chaosWeekend" type="text" /></label>
+                <label>Team radio quote of the year<input id="chaosQuote" type="text" /></label>
+              </div>
+            </div>
+
+            <div style="height:16px;"></div>
+
+            <div class="round-users">
+              <div class="round-user">
+                <strong>Big-Brain</strong>
+                <label>One team nails the regs early<select id="brainNails"></select></label>
+                <label>One team gets it wrong until mid-season<select id="brainWrong"></select></label>
+                <label>Best strategist team (overall)<select id="brainBestStrat"></select></label>
+                <label>Most painful strategy team<select id="brainWorstStrat"></select></label>
+              </div>
+              <div class="round-user">
+                <strong>Results Bingo</strong>
+                <label>Number of different race winners<select id="bingoWinners"></select></label>
+                <label>Number of first-time podiums<select id="bingoPodiums"></select></label>
+                <label>Number of safety cars (total season)<select id="bingoSC"></select></label>
+                <label>Red flags (total season)<select id="bingoRF"></select></label>
+              </div>
+            </div>
+
+            <div style="height:16px;"></div>
+
+            <div class="round-users">
+              <div class="round-user">
+                <strong>Curses & Blessings</strong>
+                <label>Unluckiest driver (mechanicals/penalties)<select id="curseUnlucky"></select></label>
+                <label>Luckiest driver (timely SC/strategy gifts)<select id="curseLucky"></select></label>
+                <label>“Cannot stop stepping on rakes” award<select id="curseRakes"></select></label>
+              </div>
+            </div>
+
+            <div style="height:16px;"></div>
+            <div class="template-actions">
+              <button class="btn" type="submit">Save full template</button>
+              <button class="btn ghost" id="clearTemplateBtn" type="button">Clear form</button>
+              <button class="btn ghost" id="autofillLabBtn" type="button">Auto-fill demo (Lab)</button>
+            </div>
+          </form>
         </div>
-        <div style="height:16px;"></div>
-        <div class="round-users">
-          <div id="wdcGrid" class="round-user"></div>
-          <div id="wccGrid" class="round-user"></div>
-        </div>
-        <div style="height:16px;"></div>
-
-        <div class="round-users">
-          <div class="round-user">
-            <strong>WDC bonus calls</strong>
-            <label>Champion’s total wins<select id="wdcWins"></select></label>
-            <label>Champion’s total poles<select id="wdcPoles"></select></label>
-            <label>Title Margin (Closest without going over)<select id="wdcMargin"></select></label>
-            <label>“Gets a win before ____ happens”<input id="wdcBefore" type="text" /></label>
-          </div>
-          <div class="round-user">
-            <strong>WCC bonus calls</strong>
-            <label>Dominant team wins by (points)<select id="wccMargin"></select></label>
-            <label>Biggest overperformer team<select id="wccOver"></select></label>
-            <label>Biggest underperformer team<select id="wccUnder"></select></label>
-          </div>
-        </div>
-
-        <div style="height:16px;"></div>
-
-        <div class="round-users">
-          <div class="round-user">
-            <strong>Out-of-the-box</strong>
-            <label>Unexpected podium finisher<select id="boxPodium"></select></label>
-            <label>Most improved driver vs 2025<select id="boxImproved"></select></label>
-            <label>Rookie moment of the year<select id="boxRookie"></select></label>
-            <label>Best wet-weather drive<select id="boxWet"></select></label>
-            <label>Top driver meme<input id="boxMeme" type="text" /></label>
-          </div>
-          <div class="round-user">
-            <strong>Chaos & Headlines</strong>
-            <label>First team principal firing<input id="chaosTP" type="text" /></label>
-            <label>First driver swap (mid-season)<input id="chaosSwap" type="text" /></label>
-            <label>First major upgrade that changes everything (team)<select id="chaosUpgrade"></select></label>
-            <label>Most chaotic weekend<input id="chaosWeekend" type="text" /></label>
-            <label>Team radio quote of the year<input id="chaosQuote" type="text" /></label>
-          </div>
-        </div>
-
-        <div style="height:16px;"></div>
-
-        <div class="round-users">
-          <div class="round-user">
-            <strong>Big-Brain</strong>
-            <label>One team nails the regs early<select id="brainNails"></select></label>
-            <label>One team gets it wrong until mid-season<select id="brainWrong"></select></label>
-            <label>Best strategist team (overall)<select id="brainBestStrat"></select></label>
-            <label>Most painful strategy team<select id="brainWorstStrat"></select></label>
-          </div>
-          <div class="round-user">
-            <strong>Results Bingo</strong>
-            <label>Number of different race winners<select id="bingoWinners"></select></label>
-            <label>Number of first-time podiums<select id="bingoPodiums"></select></label>
-            <label>Number of safety cars (total season)<select id="bingoSC"></select></label>
-            <label>Red flags (total season)<select id="bingoRF"></select></label>
-          </div>
-        </div>
-
-        <div style="height:16px;"></div>
-
-        <div class="round-users">
-          <div class="round-user">
-            <strong>Curses & Blessings</strong>
-            <label>Unluckiest driver (mechanicals/penalties)<select id="curseUnlucky"></select></label>
-            <label>Luckiest driver (timely SC/strategy gifts)<select id="curseLucky"></select></label>
-            <label>“Cannot stop stepping on rakes” award<select id="curseRakes"></select></label>
-          </div>
-        </div>
-
-        <div style="height:16px;"></div>
-        <button class="btn" type="submit">Save full template</button>
-      </form>
+      </details>
     </section>
 
     <script src="/theme.js" type="module"></script>

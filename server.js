@@ -259,6 +259,132 @@ function seedDemoData(roundCount = 8) {
   saveDb(db);
 }
 
+function shuffleWithRand(items, rand) {
+  const copy = [...(items || [])];
+  for (let i = copy.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(rand() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+}
+
+function pickWithRand(items, rand, fallback = null) {
+  if (!items || !items.length) return fallback;
+  const index = Math.floor(rand() * items.length);
+  return items[index];
+}
+
+function padToLength(items, length, fillValue = null) {
+  const out = [...(items || [])];
+  while (out.length < length) out.push(fillValue);
+  return out.slice(0, length);
+}
+
+function seedDemoSeasonPicks(data, season, users = getConfiguredUsers()) {
+  const grid = resolveGridDrivers(data, season)
+    .filter((row) => row && row.driverId)
+    .map((row) => ({
+      driverId: row.driverId,
+      driverName: row.driverName || row.driverId,
+      team: displayTeamName(row.team)
+    }));
+
+  if (!grid.length) {
+    throw fail('No drivers available for selected season', 400);
+  }
+
+  const uniqueDrivers = [...new Map(grid.map((row) => [row.driverId, row])).values()];
+  const driverIds = uniqueDrivers.map((row) => row.driverId);
+  const teamsInGrid = new Set(uniqueDrivers.map((row) => displayTeamName(row.team)).filter(Boolean));
+
+  const orderedTeams = [];
+  for (const team of getDriverTeamOrder(season)) {
+    const normalized = displayTeamName(team);
+    if (teamsInGrid.has(normalized) && !orderedTeams.includes(normalized)) orderedTeams.push(normalized);
+  }
+
+  for (const team of [...teamsInGrid].sort((a, b) => a.localeCompare(b))) {
+    if (!orderedTeams.includes(team)) orderedTeams.push(team);
+  }
+
+  const rand = seededRandom((season * 97) + 23);
+  const now = new Date().toISOString();
+  const rookieDriver = uniqueDrivers.find((row) => String(row.driverName).toLowerCase().includes('lindblad')) || uniqueDrivers[0];
+
+  const randomDriverId = () => pickWithRand(uniqueDrivers, rand, uniqueDrivers[0])?.driverId || null;
+  const randomTeam = () => pickWithRand(orderedTeams, rand, orderedTeams[0] || null);
+  const randomIntString = (max) => String(1 + Math.floor(rand() * max));
+  const randomText = (values) => pickWithRand(values, rand, 'Demo call');
+
+  const chaosTp = ['Fred Vasseur', 'Andrea Stella', 'Toto Wolff', 'Christian Horner'];
+  const chaosSwap = ['Reserve driver in by Round 5', 'Mid-season rookie promotion', 'Veteran recalled by summer break'];
+  const chaosWeekend = ['Monaco', 'Singapore', 'Las Vegas', 'Brazil'];
+  const chaosQuote = ['Plan C now', 'Box this lap', 'Push now', 'Tell him to push'];
+  const memeLine = ['Tyre whisperer', 'Radio king', 'Chaos merchant', 'Saturday specialist'];
+  const beforeLine = ['summer break', 'Monaco', 'round 10', 'European leg'];
+
+  for (const user of users) {
+    let row = data.season_predictions.find((item) => item.user === user && item.season === season);
+    if (!row) {
+      row = { user, season, created_at: now };
+      data.season_predictions.push(row);
+    }
+
+    const wdcOrder = padToLength(shuffleWithRand(driverIds, rand), 22, null);
+    const wccOrder = padToLength(shuffleWithRand(orderedTeams, rand), 11, null);
+
+    row.driver_champion_id = wdcOrder[0] || randomDriverId();
+    row.constructor_champion = wccOrder[0] || randomTeam();
+    row.wdc_order = wdcOrder;
+    row.wcc_order = wccOrder;
+    row.wdc_bonus = {
+      wins: randomIntString(24),
+      poles: randomIntString(24),
+      margin: randomIntString(150),
+      before: randomText(beforeLine)
+    };
+    row.wcc_bonus = {
+      margin: randomIntString(40),
+      over: randomTeam(),
+      under: randomTeam()
+    };
+    row.out_of_box = {
+      podium: randomDriverId(),
+      improved: randomDriverId(),
+      rookie: rookieDriver?.driverId || randomDriverId(),
+      wet: randomDriverId(),
+      meme: randomText(memeLine)
+    };
+    row.chaos = {
+      tp: randomText(chaosTp),
+      swap: randomText(chaosSwap),
+      upgrade: randomTeam(),
+      weekend: randomText(chaosWeekend),
+      quote: randomText(chaosQuote)
+    };
+    row.big_brain = {
+      nails: randomTeam(),
+      wrong: randomTeam(),
+      bestStrat: randomTeam(),
+      worstStrat: randomTeam()
+    };
+    row.bingo = {
+      winners: randomIntString(40),
+      podiums: randomIntString(40),
+      sc: randomIntString(40),
+      rf: randomIntString(40)
+    };
+    row.curses = {
+      unlucky: randomDriverId(),
+      lucky: randomDriverId(),
+      rakes: randomDriverId()
+    };
+    row.updated_at = now;
+  }
+
+  return users;
+}
+
 function loadDb() {
   if (!fs.existsSync(DB_PATH)) {
     return {
@@ -4473,6 +4599,20 @@ app.get('/api/results', (req, res) => {
     .filter(r => r.season === season && r.round === round && r.position !== null)
     .sort((a, b) => a.position - b.position);
   res.json(rows);
+});
+
+app.post('/api/demo/season-picks', (req, res) => {
+  const season = requireSeason(req.body?.season || 2026);
+  const data = loadDb();
+  const users = getConfiguredUsers();
+
+  if (!users.length) {
+    throw fail('No configured users available for demo seed', 400);
+  }
+
+  const seededUsers = seedDemoSeasonPicks(data, season, users);
+  saveDb(data);
+  res.json({ ok: true, season, seededUsers });
 });
 
 app.post('/api/demo/seed', (req, res) => {
