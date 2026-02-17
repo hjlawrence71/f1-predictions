@@ -1,11 +1,11 @@
 const TEAM_COLORS = {
   'McLaren': { primary: '#ff8000', secondary: '#6692ff' },
   'Mercedes': { primary: '#00a19c', secondary: '#c8ccce' },
-  'Red Bull Racing': { primary: '#00174c', secondary: '#ff004c' },
+  'Red Bull Racing': { primary: '#2a4dff', secondary: '#ff004c' },
   'Ferrari': { primary: '#ed1c24', secondary: '#fff200' },
   'Williams': { primary: '#64c4ff', secondary: '#1868d8' },
   'Racing Bulls': { primary: '#6c98ff', secondary: '#000000' },
-  'Aston Martin': { primary: '#00352f', secondary: '#cedc00' },
+  'Aston Martin': { primary: '#0c6d5f', secondary: '#cedc00' },
   'Haas F1 Team': { primary: '#da291c', secondary: '#aeaeae' },
   'Audi': { primary: '#f50538', secondary: '#8a8d8f' },
   'Alpine': { primary: '#005ba9', secondary: '#fd48c7' },
