@@ -71,6 +71,31 @@ async function fetchJson(url, options = {}, retries = 2) {
   throw new Error('Request failed');
 }
 
+async function fetchJsonWithStatus(url, options = {}, retries = 2) {
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+
+    try {
+      const res = await fetch(url, { ...options, signal: controller.signal });
+      clearTimeout(timeout);
+      const text = await res.text();
+      let payload = null;
+      try {
+        payload = text ? JSON.parse(text) : null;
+      } catch {
+        payload = null;
+      }
+      return { ok: res.ok, status: res.status, payload, text };
+    } catch (err) {
+      clearTimeout(timeout);
+      if (attempt >= retries) throw err;
+      await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+    }
+  }
+  throw new Error('Request failed');
+}
+
 function option(label, value) {
   const el = document.createElement('option');
   el.value = value;
@@ -109,9 +134,19 @@ async function loadSeasons() {
 function renderHealth(report) {
   const counts = report?.counts || { ok: 0, warn: 0, fail: 0 };
   const statusClass = report?.status || 'ok';
+  const checks = Array.isArray(report?.checks) ? report.checks : [];
+  const failedChecks = checks.filter((check) => check.status === 'fail').map((check) => check.label || check.id);
+  const warnedChecks = checks.filter((check) => check.status === 'warn').map((check) => check.label || check.id);
+  const plainSummary = failedChecks.length
+    ? `Action needed: ${failedChecks.join(', ')}.`
+    : (warnedChecks.length
+      ? `Ready with warnings: ${warnedChecks.join(', ')}.`
+      : 'All systems go.');
+
   healthSummary.innerHTML = `
     <span class="chip ${statusClass === 'fail' ? 'red' : ''}">${String(report?.status || 'unknown').toUpperCase()}</span>
-    Checked ${report?.checkedAt || '—'} · OK ${counts.ok} · WARN ${counts.warn} · FAIL ${counts.fail}
+    Checked ${report?.checkedAt || '—'} · OK ${counts.ok} · WARN ${counts.warn} · FAIL ${counts.fail}<br>
+    <span class="muted">${plainSummary}</span>
   `;
 
   const cards = (report?.checks || []).map((check) => {
@@ -138,9 +173,15 @@ function renderHealth(report) {
 async function runHealthCheck() {
   setStatus('Running health check...');
   try {
-    const report = await fetchJson(`/api/admin/health-check?season=${selectedSeason()}`);
+    const result = await fetchJsonWithStatus(`/api/admin/health-check?season=${selectedSeason()}`);
+    const report = result?.payload;
+    if (!report || typeof report !== 'object') {
+      throw new Error(result?.text || `Health check failed with status ${result?.status || 'unknown'}`);
+    }
     renderHealth(report);
-    setStatus(`Health check complete: ${String(report.status || 'ok').toUpperCase()}.`);
+    if (report.status === 'ok') setStatus('Health check complete: all clear.');
+    else if (report.status === 'warn') setStatus('Health check complete: usable, with warnings.');
+    else setStatus('Health check complete: action needed on failing checks.');
   } catch (err) {
     setStatus(`Health check failed: ${parseErrorMessage(err)}`);
   }

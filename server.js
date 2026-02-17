@@ -4627,13 +4627,20 @@ function buildDataFreshnessCheck(data, season) {
     .reduce((best, ts) => (best === null || ts > best ? ts : best), null);
 
   if (!totalRows) {
+    const schedule = getSeasonSchedule(season, data);
+    const firstRound = schedule[0] || null;
+    const firstRoundStartTs = parseIsoDate(firstRound?.start_date ? `${firstRound.start_date}T00:00:00Z` : null);
+    const preSeason = firstRoundStartTs !== null && Date.now() < firstRoundStartTs;
+
     return {
       id: 'data_freshness',
       label: 'Data freshness',
-      status: 'warn',
+      status: preSeason ? 'ok' : 'warn',
       ok: true,
-      message: `No data rows found yet for season ${season}.`,
-      details: { season, totalRows, sources }
+      message: preSeason
+        ? `No season rows yet (expected pre-season). First round starts ${firstRound?.start_date || 'TBD'}.`
+        : `No data rows found yet for season ${season}.`,
+      details: { season, totalRows, sources, preSeason, firstRound: firstRound?.round || null, firstRoundStart: firstRound?.start_date || null }
     };
   }
 
@@ -4803,9 +4810,9 @@ function buildBackupHealthCheck() {
     return {
       id: 'backup_health',
       label: 'DB backup health',
-      status: 'fail',
-      ok: false,
-      message: 'No backup snapshots found.',
+      status: 'warn',
+      ok: true,
+      message: 'No backup snapshots yet. Create your first snapshot in Ops.',
       details: {
         dbPath: DB_PATH,
         dbSizeBytes: dbStat?.size || 0,
