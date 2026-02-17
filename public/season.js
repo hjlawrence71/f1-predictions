@@ -6,8 +6,17 @@ const accuracyTable = document.getElementById('accuracyTable');
 const timelineChart = document.getElementById('timelineChart');
 const picksStatus = document.getElementById('picksStatus');
 const seasonSelect = document.getElementById('seasonSelect');
+const tieBreakCard = document.getElementById('tieBreakCard');
 
 const USER_COLORS = ['#e10600', '#0f1724', '#1263e6', '#0f9f8f'];
+const TIE_BREAK_LABELS = {
+  total_points: 'Total points',
+  lock_hit_rate: 'Lock hit rate',
+  podium_exact_hits: 'Exact podium hits',
+  side_bet_points: 'Side-bet points',
+  average_points_per_round: 'Avg points/round',
+  latest_round_points: 'Latest round points'
+};
 
 async function fetchJson(url, options = {}, retries = 2) {
   for (let attempt = 0; attempt <= retries; attempt += 1) {
@@ -54,6 +63,55 @@ function fixed(value, digits = 2) {
 
 function selectedSeason() {
   return Number(seasonSelect?.value || 2026);
+}
+
+function renderTieBreakCard(payload) {
+  if (!tieBreakCard) return;
+  const rows = Array.isArray(payload?.rows) ? payload.rows : [];
+  if (!rows.length) {
+    tieBreakCard.innerHTML = '<div class="muted">Tie-break explainer will appear once picks are recorded.</div>';
+    return;
+  }
+
+  const leader = payload?.leader || rows[0]?.user;
+  const runnerUp = payload?.runnerUp || rows[1]?.user || '—';
+  const decidedBy = payload?.decidedBy || null;
+  const metricLabel = decidedBy ? (TIE_BREAK_LABELS[decidedBy] || decidedBy.replaceAll('_', ' ')) : 'No separation';
+  const ranked = rows.slice(0, 2);
+
+  const topRows = ranked.map((row, idx) => {
+    const rank = idx + 1;
+    return `
+      <li>
+        <span class="eyebrow">#${rank}</span>
+        <strong>${row.user}</strong>
+        <span>${Number(row.total_points || 0)} pts</span>
+      </li>
+    `;
+  }).join('');
+
+  tieBreakCard.innerHTML = `
+    <div class="tiebreak-head">
+      <h3>Tie-Break Explainer</h3>
+      <span class="chip">${metricLabel}</span>
+    </div>
+    <p>${payload?.explanation || 'Tie-break details unavailable.'}</p>
+    <div class="tiebreak-grid">
+      <div>
+        <span class="eyebrow">Leader</span>
+        <strong>${leader || '—'}</strong>
+      </div>
+      <div>
+        <span class="eyebrow">Runner-up</span>
+        <strong>${runnerUp}</strong>
+      </div>
+      <div>
+        <span class="eyebrow">Rounds tracked</span>
+        <strong>${Array.isArray(payload?.rounds) ? payload.rounds.length : 0}</strong>
+      </div>
+    </div>
+    <ol class="tiebreak-list">${topRows}</ol>
+  `;
 }
 
 async function loadSeasons() {
@@ -475,13 +533,15 @@ async function refreshAll() {
   const season = selectedSeason();
   await loadStandings(season);
 
-  const [weeklyStats, accuracyRows, timeline] = await Promise.all([
+  const [weeklyStats, accuracyRows, timeline, tieBreak] = await Promise.all([
     fetchJson(`/api/weekly/stats?season=${season}`),
     fetchJson(`/api/season/accuracy?season=${season}`),
-    fetchJson(`/api/season/timeline?season=${season}`)
+    fetchJson(`/api/season/timeline?season=${season}`),
+    fetchJson(`/api/season/tiebreak?season=${season}`)
   ]);
 
   renderTrendCards(weeklyStats, accuracyRows, timeline);
+  renderTieBreakCard(tieBreak);
   renderAccuracyMomentum(accuracyRows, timeline);
   renderTimeline(timeline);
   await loadPicksStatus(season);

@@ -8,6 +8,8 @@ const healthChecksGrid = document.getElementById('healthChecksGrid');
 const snapshotDbMeta = document.getElementById('snapshotDbMeta');
 const snapshotsBody = document.getElementById('snapshotsBody');
 const opsStatus = document.getElementById('opsStatus');
+const importAuditSummary = document.getElementById('importAuditSummary');
+const importAuditBody = document.getElementById('importAuditBody');
 
 function setStatus(message) {
   opsStatus.textContent = message;
@@ -177,6 +179,48 @@ async function loadSnapshots() {
   }
 }
 
+function stringifyChangedRows(value) {
+  if (!value || typeof value !== 'object') return '—';
+  const pairs = Object.entries(value)
+    .filter(([, v]) => !(v === null || v === undefined || v === ''))
+    .map(([k, v]) => `${k}: ${v}`);
+  return pairs.length ? pairs.join(' · ') : '—';
+}
+
+function renderImportAudit(payload) {
+  const rows = Array.isArray(payload?.rows) ? payload.rows : [];
+  const total = Number(payload?.total || 0);
+  const last = payload?.last || null;
+  importAuditSummary.textContent = last
+    ? `Last update: ${last.at || '—'} · ${last.source || 'unknown'} · ${last.action || 'unknown'}`
+    : 'No import activity recorded yet.';
+
+  importAuditBody.innerHTML = rows.map((row) => `
+    <tr>
+      <td>${row.at || '—'}</td>
+      <td>${row.source || '—'}</td>
+      <td>${row.action || '—'}</td>
+      <td>${row.season ?? '—'}</td>
+      <td>${row.round ?? '—'}</td>
+      <td>${stringifyChangedRows(row.changedRows)}</td>
+    </tr>
+  `).join('') || '<tr><td colspan="6">No audit rows found.</td></tr>';
+
+  if (rows.length && total > rows.length) {
+    importAuditSummary.textContent += ` · Showing ${rows.length} of ${total}`;
+  }
+}
+
+async function loadImportAudit() {
+  try {
+    const payload = await fetchJson('/api/admin/import-audit?limit=30');
+    renderImportAudit(payload);
+  } catch (err) {
+    importAuditSummary.textContent = `Import audit unavailable: ${parseErrorMessage(err)}`;
+    importAuditBody.innerHTML = '<tr><td colspan="6">Failed to load import audit.</td></tr>';
+  }
+}
+
 async function createSnapshot() {
   const user = selectedUser();
   if (!user) {
@@ -201,7 +245,7 @@ async function createSnapshot() {
       })
     });
     setStatus(`Snapshot created: ${payload.snapshot}`);
-    await loadSnapshots();
+    await Promise.all([loadSnapshots(), loadImportAudit()]);
   } catch (err) {
     setStatus(`Create snapshot failed: ${parseErrorMessage(err)}`);
   }
@@ -235,7 +279,7 @@ async function rollbackSnapshot(snapshot) {
       })
     });
     setStatus(`Rollback complete: ${payload.restoredSnapshot}. Guard snapshot: ${payload.rollbackGuard || 'none'}.`);
-    await Promise.all([loadSnapshots(), runHealthCheck()]);
+    await Promise.all([loadSnapshots(), loadImportAudit(), runHealthCheck()]);
   } catch (err) {
     setStatus(`Rollback failed: ${parseErrorMessage(err)}`);
   }
@@ -256,5 +300,5 @@ snapshotsBody.addEventListener('click', (event) => {
 (async function init() {
   await loadUsers();
   await loadSeasons();
-  await Promise.all([runHealthCheck(), loadSnapshots()]);
+  await Promise.all([runHealthCheck(), loadSnapshots(), loadImportAudit()]);
 })();

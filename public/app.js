@@ -139,6 +139,34 @@ function selectedText(select) {
   return select.options[select.selectedIndex]?.textContent || '';
 }
 
+function ymdToday() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function pickCurrentWeekendRace(races) {
+  if (!Array.isArray(races) || !races.length) return null;
+  const today = ymdToday();
+
+  const active = races.find((race) => race.start_date && race.end_date && race.start_date <= today && today <= race.end_date);
+  if (active) return active;
+
+  const upcoming = races
+    .filter((race) => race.start_date && race.start_date >= today)
+    .sort((a, b) => String(a.start_date).localeCompare(String(b.start_date)))[0];
+  if (upcoming) return upcoming;
+
+  const past = races
+    .filter((race) => race.start_date && race.start_date < today)
+    .sort((a, b) => String(b.start_date).localeCompare(String(a.start_date)))[0];
+  if (past) return past;
+
+  return races[0];
+}
+
 function parseYesNoValue(value) {
   if (value === true || value === false) return value;
   const raw = String(value || '').trim().toLowerCase();
@@ -840,14 +868,23 @@ async function loadSeasons() {
 async function loadRounds() {
   const season = seasonSelect.value;
   const races = await fetchJson(`/api/races?season=${season}`);
+  const targetRace = pickCurrentWeekendRace(races);
+
   roundSelect.innerHTML = '';
-  races.forEach((r) => {
+  if (!targetRace) return;
+
+  [targetRace].forEach((r) => {
     const range = formatRange(r.start_date, r.end_date);
     const label = `R${r.round} - ${r.raceName}`;
     const opt = option(label, r.round);
     if (range) opt.title = `${label} (${range})`;
     roundSelect.appendChild(opt);
   });
+
+  const helper = targetRace.start_date && targetRace.end_date
+    ? `Locked to current weekend window: ${formatRange(targetRace.start_date, targetRace.end_date)}`
+    : 'Locked to current weekend round';
+  roundSelect.setAttribute('title', helper);
 }
 
 async function loadDrivers() {

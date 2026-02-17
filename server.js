@@ -14,6 +14,8 @@ const DB_PATH = path.join(DATA_DIR, 'db.json');
 const BACKUP_DIR = path.join(DATA_DIR, 'backups');
 const MAX_DB_BACKUPS = 25;
 const SNAPSHOT_FILE_RE = /^db-[a-z0-9T:\-\.]+(?:--[a-z0-9\-]+)?\.json$/i;
+const IMPORT_AUDIT_PATH = path.join(DATA_DIR, 'import_audit.json');
+const MAX_IMPORT_AUDIT_ROWS = 500;
 const SCHEDULE_PATH = path.join(DATA_DIR, 'schedule_2026.json');
 const GRID_PATH = path.join(DATA_DIR, 'current_grid.json');
 const SCHEDULE_FALLBACK_PATH = path.join(DEFAULT_DATA_DIR, 'schedule_2026.json');
@@ -163,6 +165,37 @@ const MISSING_SEASON_POINT_FIELDS = SEASON_NON_STANDING_FIELDS.filter(
 if (MISSING_SEASON_POINT_FIELDS.length) {
   throw new Error(`Missing season point mapping for fields: ${MISSING_SEASON_POINT_FIELDS.join(', ')}`);
 }
+
+const SEASON_NON_STANDING_FIELD_LABELS = Object.freeze({
+  'wdc_bonus.wins': "Champion's total wins",
+  'wdc_bonus.poles': "Champion's total poles",
+  'wdc_bonus.margin': 'Title margin (closest without going over)',
+  'wdc_bonus.before': 'Gets a win before ____ happens',
+  'wcc_bonus.margin': 'Dominant team wins by (points)',
+  'wcc_bonus.over': 'Biggest overperformer team',
+  'wcc_bonus.under': 'Biggest underperformer team',
+  'out_of_box.podium': 'Unexpected podium finisher',
+  'out_of_box.improved': 'Most improved driver vs prior season',
+  'out_of_box.rookie': 'Rookie moment of the year',
+  'out_of_box.wet': 'Best wet-weather drive',
+  'out_of_box.meme': 'Top driver meme',
+  'chaos.tp': 'First team principal firing',
+  'chaos.swap': 'First driver swap (mid-season)',
+  'chaos.upgrade': 'First major upgrade that changes everything',
+  'chaos.weekend': 'Most chaotic weekend',
+  'chaos.quote': 'Team radio quote of the year',
+  'big_brain.nails': 'One team nails the regs early',
+  'big_brain.wrong': 'One team gets it wrong until mid-season',
+  'big_brain.bestStrat': 'Best strategist team',
+  'big_brain.worstStrat': 'Most painful strategy team',
+  'bingo.winners': 'Different race winners',
+  'bingo.podiums': 'First-time podiums',
+  'bingo.sc': 'Safety cars (season)',
+  'bingo.rf': 'Red flags (season)',
+  'curses.unlucky': 'Unluckiest driver',
+  'curses.lucky': 'Luckiest driver',
+  'curses.rakes': 'Cannot stop stepping on rakes award'
+});
 
 app.use(express.json({ limit: '15mb' }));
 app.use(express.static(path.join(ROOT_DIR, 'public')));
@@ -548,6 +581,7 @@ function loadDb() {
     if (!('big_brain' in sp)) sp.big_brain = {};
     if (!('bingo' in sp)) sp.bingo = {};
     if (!('curses' in sp)) sp.curses = {};
+    if (!('adjudication' in sp)) sp.adjudication = {};
   }
   return data;
 }
@@ -664,6 +698,39 @@ function saveDb(data) {
   ensureStorageDirs();
   createDbSnapshot('auto-save');
   writeDbRaw(JSON.stringify(data, null, 2));
+}
+
+function loadImportAudit() {
+  if (!fs.existsSync(IMPORT_AUDIT_PATH)) return [];
+  try {
+    const parsed = JSON.parse(fs.readFileSync(IMPORT_AUDIT_PATH, 'utf8'));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveImportAudit(rows) {
+  ensureStorageDirs();
+  const trimmed = (Array.isArray(rows) ? rows : []).slice(0, MAX_IMPORT_AUDIT_ROWS);
+  const tmpPath = IMPORT_AUDIT_PATH + '.tmp';
+  fs.writeFileSync(tmpPath, JSON.stringify(trimmed, null, 2));
+  fs.renameSync(tmpPath, IMPORT_AUDIT_PATH);
+}
+
+function appendImportAudit(entry) {
+  const rows = loadImportAudit();
+  rows.unshift({
+    id: crypto.randomUUID(),
+    at: new Date().toISOString(),
+    source: 'unknown',
+    action: 'unknown',
+    season: null,
+    round: null,
+    changedRows: {},
+    ...entry
+  });
+  saveImportAudit(rows);
 }
 
 function loadSchedule() {
@@ -3781,6 +3848,24 @@ async function importOpenF1Round({ season, round }) {
   rebuildActualsAndScores(data);
   saveDb(data);
 
+  const imported = {
+    qualifying: qualifyingRows.length,
+    race: raceRows.length,
+    raceTiming: raceTimingRows.length,
+    practiceTiming: practiceTimingRows.length
+  };
+  appendImportAudit({
+    source: 'openf1',
+    action: 'sync-round',
+    season,
+    round,
+    changedRows: imported,
+    details: {
+      meetingKey: meeting.meeting_key,
+      meetingName: meeting.meeting_name || null
+    }
+  });
+
   return {
     season,
     round,
@@ -3797,12 +3882,7 @@ async function importOpenF1Round({ season, round }) {
         name: session.session_name || null
       }))
     },
-    imported: {
-      qualifying: qualifyingRows.length,
-      race: raceRows.length,
-      raceTiming: raceTimingRows.length,
-      practiceTiming: practiceTimingRows.length
-    }
+    imported
   };
 }
 
@@ -4265,6 +4345,244 @@ function getSeasonStandings(data, season) {
     .sort((a, b) => b.points - a.points || a.team.localeCompare(b.team));
 
   return { driverStandings, constructorStandings };
+}
+
+function getNestedValue(obj, dottedPath) {
+  const parts = String(dottedPath || '').split('.');
+  let cursor = obj;
+  for (const part of parts) {
+    if (!cursor || typeof cursor !== 'object') return null;
+    cursor = cursor[part];
+  }
+  if (cursor === undefined) return null;
+  return cursor;
+}
+
+function normalizeAdjudicationValue(value) {
+  if (value === true || value === false) return value;
+  if (value === null || value === undefined || value === '') return null;
+  const raw = String(value).trim().toLowerCase();
+  if (raw === 'hit' || raw === 'yes' || raw === 'true' || raw === '1') return true;
+  if (raw === 'miss' || raw === 'no' || raw === 'false' || raw === '0') return false;
+  return null;
+}
+
+function normalizeAdjudicationMap(input) {
+  const out = {};
+  const raw = (input && typeof input === 'object' && !Array.isArray(input)) ? input : {};
+  for (const field of SEASON_NON_STANDING_FIELDS) {
+    out[field] = normalizeAdjudicationValue(raw[field]);
+  }
+  return out;
+}
+
+function buildWdcScoring(actualDriverOrder, predictedOrder) {
+  const actualPosByDriver = new Map();
+  (actualDriverOrder || []).forEach((driverId, idx) => {
+    if (driverId) actualPosByDriver.set(driverId, idx + 1);
+  });
+
+  let total = 0;
+  const lines = [];
+  const picks = Array.isArray(predictedOrder) ? predictedOrder : [];
+
+  for (let idx = 0; idx < picks.length; idx += 1) {
+    const driverId = picks[idx];
+    if (!driverId) continue;
+
+    const predictedPos = idx + 1;
+    const actualPos = actualPosByDriver.get(driverId);
+    if (!actualPos) continue;
+
+    const delta = Math.abs(actualPos - predictedPos);
+    let points = 0;
+    if (delta === 0) points = SEASON_STANDINGS_SCORING.wdcExact;
+    else if (delta === 1) points = SEASON_STANDINGS_SCORING.wdcWithin1;
+    else if (delta <= 3) points = SEASON_STANDINGS_SCORING.wdcWithin3;
+
+    total += points;
+    lines.push({
+      driverId,
+      predictedPos,
+      actualPos,
+      delta,
+      points
+    });
+  }
+
+  return { total, lines };
+}
+
+function buildWccScoring(actualTeamOrder, predictedOrder) {
+  const actualPosByTeam = new Map();
+  (actualTeamOrder || []).forEach((team, idx) => {
+    if (team) actualPosByTeam.set(displayTeamName(team), idx + 1);
+  });
+
+  let total = 0;
+  const lines = [];
+  const picks = Array.isArray(predictedOrder) ? predictedOrder : [];
+
+  for (let idx = 0; idx < picks.length; idx += 1) {
+    const rawTeam = picks[idx];
+    if (!rawTeam) continue;
+    const team = displayTeamName(rawTeam);
+    const predictedPos = idx + 1;
+    const actualPos = actualPosByTeam.get(team);
+    if (!actualPos) continue;
+
+    const exact = actualPos === predictedPos;
+    const points = exact ? SEASON_STANDINGS_SCORING.wccExact : 0;
+    total += points;
+
+    lines.push({
+      team,
+      predictedPos,
+      actualPos,
+      exact,
+      points
+    });
+  }
+
+  return { total, lines };
+}
+
+function buildSeasonAdjudicationSummary(row, standings) {
+  const adjudication = normalizeAdjudicationMap(row?.adjudication || {});
+  const nonStandingRows = [];
+  let nonStandingPoints = 0;
+  let nonStandingMax = 0;
+  let nonStandingPending = 0;
+  let nonStandingHits = 0;
+  let nonStandingMisses = 0;
+
+  for (const field of SEASON_NON_STANDING_FIELDS) {
+    const pickValue = getNestedValue(row, field);
+    const hasPick = !(pickValue === null || pickValue === undefined || String(pickValue).trim() === '');
+    const maxPoints = hasPick ? Number(SEASON_NON_STANDING_FIELD_POINTS[field] || 0) : 0;
+    const status = hasPick ? adjudication[field] : null;
+    const scoredPoints = hasPick && status === true ? maxPoints : 0;
+
+    if (hasPick) {
+      nonStandingMax += maxPoints;
+      if (status === true) nonStandingHits += 1;
+      else if (status === false) nonStandingMisses += 1;
+      else nonStandingPending += 1;
+    }
+
+    nonStandingPoints += scoredPoints;
+
+    nonStandingRows.push({
+      field,
+      label: SEASON_NON_STANDING_FIELD_LABELS[field] || field,
+      pickValue: hasPick ? pickValue : null,
+      points: maxPoints,
+      status,
+      scoredPoints
+    });
+  }
+
+  const actualDriverOrder = standings?.driverStandings?.map((rowItem) => rowItem.driverId) || [];
+  const actualTeamOrder = standings?.constructorStandings?.map((rowItem) => displayTeamName(rowItem.team)) || [];
+  const wdc = buildWdcScoring(actualDriverOrder, row?.wdc_order || []);
+  const wcc = buildWccScoring(actualTeamOrder, row?.wcc_order || []);
+  const standingsPoints = wdc.total + wcc.total;
+
+  return {
+    nonStanding: {
+      rows: nonStandingRows,
+      points: nonStandingPoints,
+      max: nonStandingMax,
+      hits: nonStandingHits,
+      misses: nonStandingMisses,
+      pending: nonStandingPending
+    },
+    standings: {
+      points: standingsPoints,
+      wdc,
+      wcc
+    },
+    totalPoints: standingsPoints + nonStandingPoints
+  };
+}
+
+function buildTieBreakReport(data, season) {
+  const users = getConfiguredUsers();
+  const preds = (data.predictions || []).filter((row) => row.season === season);
+  const rounds = [...new Set(preds.map((row) => row.round).filter(Boolean))].sort((a, b) => a - b);
+  const lastRound = rounds.length ? rounds[rounds.length - 1] : null;
+
+  const rows = users.map((user) => {
+    const userPreds = preds.filter((row) => row.user === user);
+    const totalPoints = userPreds.reduce((sum, row) => sum + Number(row.score_total || 0), 0);
+    const lockAttempts = userPreds.filter((row) => row.lock_field).length;
+    const lockHits = userPreds.filter((row) => Number(row.score_lock || 0) > 0).length;
+    const lockHitRate = lockAttempts ? (lockHits / lockAttempts) : 0;
+    const podiumExactHits = userPreds.filter((row) => Number(row.podium_exact || 0) > 0).length;
+    const sideBetPoints = userPreds.reduce((sum, row) => sum + Number(row.score_sidebets_total || 0), 0);
+    const averagePointsPerRound = rounds.length ? (totalPoints / rounds.length) : 0;
+    const latestRoundPoints = lastRound
+      ? userPreds.filter((row) => row.round === lastRound).reduce((sum, row) => sum + Number(row.score_total || 0), 0)
+      : 0;
+
+    return {
+      user,
+      total_points: totalPoints,
+      lock_hit_rate: lockHitRate,
+      podium_exact_hits: podiumExactHits,
+      side_bet_points: sideBetPoints,
+      average_points_per_round: averagePointsPerRound,
+      latest_round_points: latestRoundPoints
+    };
+  });
+
+  const tieBreakers = [
+    'total_points',
+    'lock_hit_rate',
+    'podium_exact_hits',
+    'side_bet_points',
+    'average_points_per_round',
+    'latest_round_points'
+  ];
+
+  const sorted = [...rows].sort((a, b) => {
+    for (const key of tieBreakers) {
+      const av = Number(a[key] || 0);
+      const bv = Number(b[key] || 0);
+      if (bv !== av) return bv - av;
+    }
+    return String(a.user || '').localeCompare(String(b.user || ''));
+  });
+
+  const leader = sorted[0] || null;
+  const runnerUp = sorted[1] || null;
+  let decidedBy = null;
+  let explanation = 'No tie-break comparison available yet.';
+
+  if (leader && runnerUp) {
+    for (const key of tieBreakers) {
+      const av = Number(leader[key] || 0);
+      const bv = Number(runnerUp[key] || 0);
+      if (av !== bv) {
+        decidedBy = key;
+        const delta = av - bv;
+        explanation = `${leader.user} leads ${runnerUp.user} on ${key.replaceAll('_', ' ')} (${av.toFixed(2)} vs ${bv.toFixed(2)}, +${delta.toFixed(2)}).`;
+        break;
+      }
+    }
+    if (!decidedBy) explanation = `${leader.user} and ${runnerUp.user} are fully tied across all tie-breakers.`;
+  }
+
+  return {
+    season,
+    rounds,
+    tieBreakers,
+    rows: sorted,
+    leader: leader ? leader.user : null,
+    runnerUp: runnerUp ? runnerUp.user : null,
+    decidedBy,
+    explanation
+  };
 }
 
 function parseIsoDate(value) {
@@ -4814,11 +5132,37 @@ app.post('/api/admin/snapshots/rollback', (req, res) => {
   const cfg = loadConfig();
   const user = requireKnownUser(cfg, userRaw, pin);
   const result = restoreDbSnapshot(snapshot);
+  appendImportAudit({
+    source: 'backup',
+    action: 'rollback',
+    season: null,
+    round: null,
+    changedRows: {
+      restoredSnapshot: result.restoredSnapshot,
+      rollbackGuard: result.rollbackGuard || null
+    },
+    details: {
+      restoredBy: user
+    }
+  });
 
   res.json({
     ok: true,
     restoredBy: user,
     ...result
+  });
+});
+
+app.get('/api/admin/import-audit', (req, res) => {
+  const limitRaw = toInt(req.query.limit);
+  const limit = Math.max(1, Math.min(200, limitRaw || 30));
+  const allRows = loadImportAudit();
+  const rows = allRows.slice(0, limit);
+  const last = rows[0] || null;
+  res.json({
+    total: allRows.length,
+    last,
+    rows
   });
 });
 
@@ -4872,6 +5216,100 @@ app.get('/api/season/summary', (req, res) => {
     return { user, total };
   });
   res.json(summary);
+});
+
+app.get('/api/season/tiebreak', (req, res) => {
+  const season = requireSeason(req.query.season);
+  const data = loadDb();
+  res.json(buildTieBreakReport(data, season));
+});
+
+app.get('/api/season/adjudication', (req, res) => {
+  const season = requireSeason(req.query.season);
+  const data = loadDb();
+  const standings = getSeasonStandings(data, season);
+  const users = getConfiguredUsers();
+
+  const rows = users.map((user) => {
+    const pickRow = data.season_predictions.find((entry) => entry.user === user && entry.season === season) || {
+      user,
+      season,
+      wdc_order: [],
+      wcc_order: [],
+      wdc_bonus: {},
+      wcc_bonus: {},
+      out_of_box: {},
+      chaos: {},
+      big_brain: {},
+      bingo: {},
+      curses: {},
+      adjudication: {}
+    };
+    const summary = buildSeasonAdjudicationSummary(pickRow, standings);
+
+    return {
+      user,
+      season,
+      adjudication: normalizeAdjudicationMap(pickRow.adjudication || {}),
+      summary
+    };
+  });
+
+  res.json({
+    season,
+    rules: {
+      nonStandingFieldPoints: SEASON_NON_STANDING_FIELD_POINTS,
+      nonStandingFieldLabels: SEASON_NON_STANDING_FIELD_LABELS,
+      standings: SEASON_STANDINGS_SCORING
+    },
+    standings,
+    rows
+  });
+});
+
+app.post('/api/season/adjudication', (req, res) => {
+  const { user: userRaw, season: seasonRaw, adjudication, pin } = req.body || {};
+  const cfg = loadConfig();
+  const user = requireKnownUser(cfg, userRaw, pin);
+  const season = requireSeason(seasonRaw);
+
+  const data = loadDb();
+  const now = new Date().toISOString();
+  let row = data.season_predictions.find((entry) => entry.user === user && entry.season === season);
+
+  if (!row) {
+    row = {
+      user,
+      season,
+      wdc_order: [],
+      wcc_order: [],
+      wdc_bonus: {},
+      wcc_bonus: {},
+      out_of_box: {},
+      chaos: {},
+      big_brain: {},
+      bingo: {},
+      curses: {},
+      created_at: now
+    };
+    data.season_predictions.push(row);
+  }
+
+  row.adjudication = normalizeAdjudicationMap(adjudication);
+  row.adjudication_updated_at = now;
+  row.updated_at = now;
+
+  saveDb(data);
+
+  const standings = getSeasonStandings(data, season);
+  const summary = buildSeasonAdjudicationSummary(row, standings);
+  res.json({
+    ok: true,
+    user,
+    season,
+    adjudication: row.adjudication,
+    summary
+  });
 });
 
 app.get('/api/season/accuracy', (req, res) => {
@@ -5175,6 +5613,18 @@ app.post('/api/demo/season-picks', (req, res) => {
 
   const seededUsers = seedDemoSeasonPicks(data, season, users);
   saveDb(data);
+  appendImportAudit({
+    source: 'demo',
+    action: 'seed-season-picks',
+    season,
+    round: null,
+    changedRows: {
+      season_predictions: seededUsers.length
+    },
+    details: {
+      users: seededUsers
+    }
+  });
   res.json({ ok: true, season, seededUsers });
 });
 
@@ -5186,6 +5636,15 @@ app.post('/api/demo/seed', (req, res) => {
   }
 
   seedDemoData(rounds);
+  appendImportAudit({
+    source: 'demo',
+    action: 'seed-round-data',
+    season: 2026,
+    round: null,
+    changedRows: {
+      rounds
+    }
+  });
   res.json({ ok: true, rounds });
 });
 

@@ -15,6 +15,7 @@ const templateEditorDetails = document.getElementById('templateEditorDetails');
 const templateCompareGrid = document.getElementById('templateCompareGrid');
 const templateCompareStatus = document.getElementById('templateCompareStatus');
 const openRulebookBtn = document.getElementById('openRulebookBtn');
+const openAdjudicationBtn = document.getElementById('openAdjudicationBtn');
 
 const WDC_SIZE = 22;
 const WCC_SIZE = 11;
@@ -710,6 +711,13 @@ if (openRulebookBtn) {
   openRulebookBtn.addEventListener('click', () => {
     const season = selectedSeason();
     window.location.href = `/rulebook.html?season=${season}`;
+  });
+}
+
+if (openAdjudicationBtn) {
+  openAdjudicationBtn.addEventListener('click', () => {
+    const season = selectedSeason();
+    window.location.href = `/championship-adjudication.html?season=${season}`;
   });
 }
 
