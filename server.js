@@ -69,6 +69,99 @@ const SIDE_BET_PICK_FIELDS = SIDE_BET_KEYS.map((key) => SIDE_BET_DEFS[key].pickF
 const SIDE_BET_SCORE_FIELDS = SIDE_BET_KEYS.map((key) => SIDE_BET_DEFS[key].scoreField);
 const TOP4_TEAMS = new Set(['McLaren', 'Mercedes', 'Red Bull Racing', 'Ferrari']);
 
+const SEASON_STANDINGS_SCORING = Object.freeze({
+  wdcExact: 5,
+  wdcWithin1: 3,
+  wdcWithin3: 1,
+  wccExact: 6
+});
+
+const WEEKLY_PICK_SCORING = Object.freeze({
+  p1: 1,
+  p2: 1,
+  p3: 1,
+  pole: 1,
+  fastestLap: 1,
+  wildcardTop10: 1,
+  lockBonus: 1,
+  podiumExactPerSlot: 2
+});
+
+const SEASON_NON_STANDING_FIELD_POINTS = Object.freeze({
+  'wdc_bonus.wins': 4,
+  'wdc_bonus.poles': 4,
+  'wdc_bonus.margin': 4,
+  'wdc_bonus.before': 4,
+
+  'wcc_bonus.margin': 4,
+  'wcc_bonus.over': 4,
+  'wcc_bonus.under': 4,
+
+  'out_of_box.podium': 4,
+  'out_of_box.improved': 4,
+  'out_of_box.rookie': 4,
+  'out_of_box.wet': 4,
+  'out_of_box.meme': 4,
+
+  'chaos.tp': 10,
+  'chaos.swap': 10,
+  'chaos.upgrade': 4,
+  'chaos.weekend': 4,
+  'chaos.quote': 4,
+
+  'big_brain.nails': 4,
+  'big_brain.wrong': 4,
+  'big_brain.bestStrat': 4,
+  'big_brain.worstStrat': 4,
+
+  'bingo.winners': 4,
+  'bingo.podiums': 4,
+  'bingo.sc': 4,
+  'bingo.rf': 4,
+
+  'curses.unlucky': 4,
+  'curses.lucky': 4,
+  'curses.rakes': 4
+});
+
+const SEASON_NON_STANDING_FIELDS = Object.freeze([
+  'wdc_bonus.wins',
+  'wdc_bonus.poles',
+  'wdc_bonus.margin',
+  'wdc_bonus.before',
+  'wcc_bonus.margin',
+  'wcc_bonus.over',
+  'wcc_bonus.under',
+  'out_of_box.podium',
+  'out_of_box.improved',
+  'out_of_box.rookie',
+  'out_of_box.wet',
+  'out_of_box.meme',
+  'chaos.tp',
+  'chaos.swap',
+  'chaos.upgrade',
+  'chaos.weekend',
+  'chaos.quote',
+  'big_brain.nails',
+  'big_brain.wrong',
+  'big_brain.bestStrat',
+  'big_brain.worstStrat',
+  'bingo.winners',
+  'bingo.podiums',
+  'bingo.sc',
+  'bingo.rf',
+  'curses.unlucky',
+  'curses.lucky',
+  'curses.rakes'
+]);
+
+const MISSING_SEASON_POINT_FIELDS = SEASON_NON_STANDING_FIELDS.filter(
+  (field) => !Object.prototype.hasOwnProperty.call(SEASON_NON_STANDING_FIELD_POINTS, field)
+);
+if (MISSING_SEASON_POINT_FIELDS.length) {
+  throw new Error(`Missing season point mapping for fields: ${MISSING_SEASON_POINT_FIELDS.join(', ')}`);
+}
+
 app.use(express.json({ limit: '15mb' }));
 app.use(express.static(path.join(ROOT_DIR, 'public')));
 
@@ -4257,6 +4350,34 @@ app.get('/api/season/picks', (req, res) => {
 app.get('/api/season/picks-lock', (req, res) => {
   const season = requireSeason(req.query.season);
   res.json(getSeasonPickLockStatus(season));
+});
+
+app.get('/api/season/rules', (req, res) => {
+  const season = toInt(req.query.season) || 2026;
+  const lock = getSeasonPickLockStatus(season);
+  const weeklySideBetPoints = Object.fromEntries(
+    SIDE_BET_KEYS.map((key) => [key, SIDE_BET_DEFS[key].points])
+  );
+
+  res.json({
+    version: 'v1',
+    season,
+    lock,
+    weekly: {
+      picks: WEEKLY_PICK_SCORING,
+      sideBets: weeklySideBetPoints
+    },
+    standings: SEASON_STANDINGS_SCORING,
+    nonStandingFieldPoints: SEASON_NON_STANDING_FIELD_POINTS,
+    tieBreakers: [
+      'total_points',
+      'lock_hit_rate',
+      'podium_exact_hits',
+      'side_bet_points',
+      'average_points_per_round',
+      'latest_round_points'
+    ]
+  });
 });
 
 app.post('/api/season/picks', (req, res) => {

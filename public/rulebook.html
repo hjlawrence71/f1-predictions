@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Rulebook</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script>document.documentElement.setAttribute('data-theme', localStorage.getItem('f1-theme') || 'light');</script>
+  </head>
+  <body>
+    <div class="page-max">
+      <button id="themeToggle" class="theme-switch" type="button" aria-label="Toggle theme" aria-pressed="false">
+        <span class="theme-icon sun" aria-hidden="true">☀</span>
+        <span class="theme-icon moon" aria-hidden="true">☾</span>
+        <span class="theme-knob" aria-hidden="true"></span>
+      </button>
+
+      <header class="app-header">
+        <div>
+          <div class="brand">
+            <img class="brand-mark" src="/assets/f1-logo.svg" alt="F1 logo" />
+            <span class="brand-title">Predictions</span>
+          </div>
+          <h1>Rulebook</h1>
+        </div>
+        <div class="header-actions">
+          <a class="btn ghost" href="/index.html">Race Control</a>
+          <a class="btn ghost" href="/season.html">Season hub</a>
+          <a class="btn ghost" href="/driver-radar.html">Intelligence</a>
+          <a class="btn ghost" href="/projections.html">Projection Lab</a>
+          <a class="btn ghost" href="/template.html">Championship</a>
+          <a class="btn ghost active" aria-current="page" href="/rulebook.html">Rulebook</a>
+        </div>
+      </header>
+
+      <section class="card">
+        <div class="controls">
+          <label>
+            Season
+            <select id="seasonSelect"></select>
+          </label>
+          <label>
+            Version
+            <input id="rulebookVersion" type="text" readonly value="v1" />
+          </label>
+        </div>
+      </section>
+
+      <section class="grid">
+        <article class="card">
+          <h2>Lock Window</h2>
+          <div id="lockSummary" class="muted">Loading lock rules...</div>
+        </article>
+
+        <article class="card">
+          <h2>Tie-Breakers</h2>
+          <ol id="tieBreakersList" class="rulebook-list"></ol>
+        </article>
+      </section>
+
+      <section class="card">
+        <h2>Weekly Picks Scoring</h2>
+        <div class="table">
+          <table>
+            <thead>
+              <tr>
+                <th>Item</th>
+                <th>Points</th>
+                <th>Notes</th>
+              </tr>
+            </thead>
+            <tbody id="weeklyScoringRows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Championship Standings Scoring</h2>
+        <div class="table">
+          <table>
+            <thead>
+              <tr>
+                <th>Rule</th>
+                <th>Points</th>
+              </tr>
+            </thead>
+            <tbody id="standingsScoringRows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Championship Non-Standings Fields</h2>
+        <div class="muted">All non-WDC/WCC fields are explicitly mapped to a point value.</div>
+        <div class="table" style="margin-top: 10px;">
+          <table>
+            <thead>
+              <tr>
+                <th>Field Group</th>
+                <th>Field</th>
+                <th>Points</th>
+              </tr>
+            </thead>
+            <tbody id="nonStandingsRows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <script src="/theme.js" type="module"></script>
+      <script src="/rulebook.js" type="module"></script>
+    </div>
+  </body>
+</html>

@@ -14,6 +14,7 @@ const wccGrid = document.getElementById('wccGrid');
 const templateEditorDetails = document.getElementById('templateEditorDetails');
 const templateCompareGrid = document.getElementById('templateCompareGrid');
 const templateCompareStatus = document.getElementById('templateCompareStatus');
+const openRulebookBtn = document.getElementById('openRulebookBtn');
 
 const WDC_SIZE = 22;
 const WCC_SIZE = 11;
@@ -705,6 +706,12 @@ userSelect.addEventListener('change', refreshAll);
 templateForm.addEventListener('submit', saveTemplate);
 if (clearTemplateBtn) clearTemplateBtn.addEventListener('click', clearCurrentForm);
 if (autofillLabBtn) autofillLabBtn.addEventListener('click', loadAutofillDemo);
+if (openRulebookBtn) {
+  openRulebookBtn.addEventListener('click', () => {
+    const season = selectedSeason();
+    window.location.href = `/rulebook.html?season=${season}`;
+  });
+}
 
 (async function init() {
   await loadConfig();
