@@ -41,7 +41,7 @@ const TEAM_ORDER_BY_SEASON = {
     'Racing Bulls',
     'Aston Martin',
     'Haas F1 Team',
-    'Kick Sauber',
+    'Audi',
     'Alpine',
     'Cadillac'
   ]
@@ -71,7 +71,7 @@ const TEAM_META_BY_SEASON = {
     'Racing Bulls': { officialName: 'Visa Cash App Racing Bulls Formula One Team', logoSlug: 'racing-bulls' },
     'Aston Martin': { officialName: 'Aston Martin Aramco Formula One Team', logoSlug: 'aston-martin' },
     'Haas F1 Team': { officialName: 'TGR Haas F1 Team', logoSlug: 'haas' },
-    'Kick Sauber': { officialName: 'Audi Revolut F1 Team', logoSlug: 'audi' },
+    'Audi': { officialName: 'Audi Revolut F1 Team', logoSlug: 'audi' },
     'Alpine': { officialName: 'BWT Alpine Formula One Team', logoSlug: 'alpine' },
     'Cadillac': { officialName: 'Cadillac Formula 1 Team', logoSlug: 'cadillac' }
   }
@@ -87,6 +87,7 @@ const TEAM_COLORS = {
   'Aston Martin': { primary: '#00352f', secondary: '#cedc00' },
   'Haas F1 Team': { primary: '#da291c', secondary: '#aeaeae' },
   'Kick Sauber': { primary: '#f50538', secondary: '#8a8d8f' },
+  'Audi': { primary: '#f50538', secondary: '#8a8d8f' },
   'Alpine': { primary: '#005ba9', secondary: '#fd48c7' },
   'Cadillac': { primary: '#848689', secondary: '#1f262a' }
 };
@@ -221,10 +222,49 @@ function driverNumberTag(driver) {
 }
 
 function teamKey(teamName, season = activeSeason()) {
+  const raw = String(teamName || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+
   const normalized = displayTeamName(teamName);
   const order = getTeamOrder(season);
-  if (normalized === 'Kick Sauber' || normalized === 'Audi' || normalized === 'Sauber') return 'Kick Sauber';
-  if (normalized === 'Haas' || normalized === 'Haas F1 Team') return 'Haas F1 Team';
+
+  if (
+    raw === 'haas' ||
+    raw === 'haas f1 team' ||
+    raw === 'moneygram haas f1 team' ||
+    raw === 'tgr haas f1 team' ||
+    normalized === 'Haas' ||
+    normalized === 'Haas F1 Team'
+  ) return 'Haas F1 Team';
+
+  if (season === 2025) {
+    if (
+      raw === 'kick sauber' ||
+      raw === 'stake f1 team kick sauber' ||
+      raw === 'stake sauber' ||
+      raw === 'sauber' ||
+      raw === 'audi' ||
+      raw === 'audi revolut f1 team' ||
+      normalized === 'Kick Sauber' ||
+      normalized === 'Audi' ||
+      normalized === 'Sauber'
+    ) return 'Kick Sauber';
+  }
+
+  if (
+    raw === 'kick sauber' ||
+    raw === 'stake f1 team kick sauber' ||
+    raw === 'stake sauber' ||
+    raw === 'sauber' ||
+    raw === 'audi' ||
+    raw === 'audi revolut f1 team' ||
+    normalized === 'Kick Sauber' ||
+    normalized === 'Audi' ||
+    normalized === 'Sauber'
+  ) return 'Audi';
+
   if (order.includes(normalized)) return normalized;
   return normalized;
 }

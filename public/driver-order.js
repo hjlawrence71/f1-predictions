@@ -7,7 +7,7 @@ const TEAM_DISPLAY_ORDER = [
   'Racing Bulls',
   'Aston Martin',
   'Haas F1 Team',
-  'Kick Sauber',
+  'Audi',
   'Alpine'
 ];
 
@@ -23,9 +23,14 @@ const TEAM_ALIASES = new Map([
   ['aston martin', 'Aston Martin'],
   ['haas', 'Haas F1 Team'],
   ['haas f1 team', 'Haas F1 Team'],
-  ['kick sauber', 'Kick Sauber'],
-  ['sauber', 'Kick Sauber'],
-  ['audi', 'Kick Sauber'],
+  ['moneygram haas f1 team', 'Haas F1 Team'],
+  ['tgr haas f1 team', 'Haas F1 Team'],
+  ['kick sauber', 'Audi'],
+  ['stake f1 team kick sauber', 'Audi'],
+  ['stake sauber', 'Audi'],
+  ['sauber', 'Audi'],
+  ['audi', 'Audi'],
+  ['audi revolut f1 team', 'Audi'],
   ['alpine', 'Alpine']
 ]);
 

@@ -43,7 +43,7 @@ const DRIVER_TEAM_ORDER_BY_SEASON = {
     'Racing Bulls',
     'Aston Martin',
     'Haas F1 Team',
-    'Kick Sauber',
+    'Audi',
     'Alpine',
     'Cadillac'
   ]
@@ -1994,6 +1994,7 @@ const PROJECTION_TEAM_TRAITS_BY_SEASON = {
     'Aston Martin': { high_speed: 0.68, downforce: 0.7, traction: 0.69, degradation: 0.71, braking: 0.69, reliability: 0.73, strategy: 0.67 },
     'Haas F1 Team': { high_speed: 0.71, downforce: 0.62, traction: 0.64, degradation: 0.63, braking: 0.67, reliability: 0.69, strategy: 0.63 },
     'Kick Sauber': { high_speed: 0.65, downforce: 0.65, traction: 0.63, degradation: 0.67, braking: 0.65, reliability: 0.72, strategy: 0.65 },
+    Audi: { high_speed: 0.65, downforce: 0.65, traction: 0.63, degradation: 0.67, braking: 0.65, reliability: 0.72, strategy: 0.65 },
     Alpine: { high_speed: 0.68, downforce: 0.66, traction: 0.67, degradation: 0.68, braking: 0.67, reliability: 0.71, strategy: 0.66 }
   },
   2026: {
@@ -2006,6 +2007,7 @@ const PROJECTION_TEAM_TRAITS_BY_SEASON = {
     'Aston Martin': { high_speed: 0.66, downforce: 0.69, traction: 0.68, degradation: 0.7, braking: 0.68, reliability: 0.73, strategy: 0.67 },
     'Haas F1 Team': { high_speed: 0.7, downforce: 0.61, traction: 0.63, degradation: 0.62, braking: 0.66, reliability: 0.68, strategy: 0.63 },
     'Kick Sauber': { high_speed: 0.63, downforce: 0.64, traction: 0.62, degradation: 0.66, braking: 0.65, reliability: 0.72, strategy: 0.64 },
+    Audi: { high_speed: 0.63, downforce: 0.64, traction: 0.62, degradation: 0.66, braking: 0.65, reliability: 0.72, strategy: 0.64 },
     Alpine: { high_speed: 0.67, downforce: 0.65, traction: 0.66, degradation: 0.67, braking: 0.66, reliability: 0.71, strategy: 0.65 },
     Cadillac: { high_speed: 0.6, downforce: 0.58, traction: 0.59, degradation: 0.61, braking: 0.61, reliability: 0.64, strategy: 0.6 }
   }
@@ -3544,7 +3546,7 @@ function displayTeamName(team) {
     key === 'sauber' ||
     key === 'audi' ||
     key === 'audi revolut f1 team'
-  ) return 'Kick Sauber';
+  ) return 'Audi';
 
   if (key === 'alpine' || key === 'bwt alpine f1 team' || key === 'bwt alpine formula one team') return 'Alpine';
   if (key === 'cadillac' || key === 'cadillac formula 1 team') return 'Cadillac';

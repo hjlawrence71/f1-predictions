@@ -749,7 +749,7 @@ function renderWeekendFocus() {
   const roundLabel = selectedText(roundSelect) || 'Select round';
   const season = seasonSelect.value || '2026';
 
-  const raceMatch = roundLabel.match(/^R\d+\s*-\s*(.+?)\s*\(/);
+  const raceMatch = roundLabel.match(/^R\d+\s*-\s*(.+?)(?:\s*\(|$)/);
   const roundMatch = roundLabel.match(/^R(\d+)/);
   const roundNum = roundMatch ? roundMatch[1] : '';
 
@@ -808,11 +808,10 @@ function renderUserFocus() {
   const roundShort = roundLabel.replace(/\s*\([^)]*\)\s*$/, '');
 
   userFocus.innerHTML = `
-    <div class="user-focus-grid">
-      <div class="uf-item"><span>User</span><strong>${user}</strong></div>
-      <div class="uf-item"><span>Lock</span><strong>${lock}</strong></div>
-      <div class="uf-item"><span>Season</span><strong>${season}</strong></div>
-      <div class="uf-item"><span>Round</span><strong>${roundShort}</strong></div>
+    <div class="user-focus-inline">
+      <div class="uf-pill"><span>User</span><strong>${user}</strong></div>
+      <div class="uf-pill"><span>Lock</span><strong>${lock}</strong></div>
+      <div class="uf-meta">${season} · ${roundShort}</div>
     </div>
   `;
 }
@@ -843,10 +842,12 @@ async function loadRounds() {
   const season = seasonSelect.value;
   const races = await fetchJson(`/api/races?season=${season}`);
   roundSelect.innerHTML = '';
-  races.forEach(r => {
+  races.forEach((r) => {
     const range = formatRange(r.start_date, r.end_date);
-    const label = `R${r.round} - ${r.raceName} (${range})`;
-    roundSelect.appendChild(option(label, r.round));
+    const label = `R${r.round} - ${r.raceName}`;
+    const opt = option(label, r.round);
+    if (range) opt.title = `${label} (${range})`;
+    roundSelect.appendChild(opt);
   });
 }
 
