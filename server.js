@@ -1,6 +1,7 @@
 import express from 'express';
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { parse } from 'csv-parse/sync';
 
@@ -12,6 +13,7 @@ const DATA_DIR = process.env.DATA_DIR || DEFAULT_DATA_DIR;
 const DB_PATH = path.join(DATA_DIR, 'db.json');
 const BACKUP_DIR = path.join(DATA_DIR, 'backups');
 const MAX_DB_BACKUPS = 25;
+const SNAPSHOT_FILE_RE = /^db-[a-z0-9T:\-\.]+(?:--[a-z0-9\-]+)?\.json$/i;
 const SCHEDULE_PATH = path.join(DATA_DIR, 'schedule_2026.json');
 const GRID_PATH = path.join(DATA_DIR, 'current_grid.json');
 const SCHEDULE_FALLBACK_PATH = path.join(DEFAULT_DATA_DIR, 'schedule_2026.json');
@@ -550,28 +552,118 @@ function loadDb() {
   return data;
 }
 
-function saveDb(data) {
+function ensureStorageDirs() {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
   if (!fs.existsSync(BACKUP_DIR)) fs.mkdirSync(BACKUP_DIR, { recursive: true });
+}
 
-  if (fs.existsSync(DB_PATH)) {
-    const ts = new Date().toISOString().replace(/[:.]/g, '-');
-    const backupPath = path.join(BACKUP_DIR, 'db-' + ts + '.json');
-    fs.copyFileSync(DB_PATH, backupPath);
+function snapshotReasonSuffix(reason = 'auto') {
+  const normalized = String(reason || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 24);
+  if (!normalized || normalized === 'auto') return '';
+  return '--' + normalized;
+}
 
-    const backups = fs.readdirSync(BACKUP_DIR)
-      .filter(name => /^db-.*\.json$/.test(name))
-      .sort();
+function buildSnapshotName(reason = 'auto') {
+  const ts = new Date().toISOString().replace(/[:.]/g, '-');
+  return `db-${ts}${snapshotReasonSuffix(reason)}.json`;
+}
 
-    while (backups.length > MAX_DB_BACKUPS) {
-      const oldest = backups.shift();
-      fs.unlinkSync(path.join(BACKUP_DIR, oldest));
-    }
+function normalizeSnapshotName(name) {
+  const value = String(name || '').trim();
+  if (!SNAPSHOT_FILE_RE.test(value) || value.includes('/') || value.includes('\\')) {
+    throw fail('Invalid snapshot name', 400);
+  }
+  return value;
+}
+
+function pruneSnapshots() {
+  if (!fs.existsSync(BACKUP_DIR)) return;
+  const backups = fs.readdirSync(BACKUP_DIR)
+    .filter((name) => SNAPSHOT_FILE_RE.test(name))
+    .sort();
+
+  while (backups.length > MAX_DB_BACKUPS) {
+    const oldest = backups.shift();
+    fs.unlinkSync(path.join(BACKUP_DIR, oldest));
+  }
+}
+
+function createDbSnapshot(reason = 'auto') {
+  ensureStorageDirs();
+  if (!fs.existsSync(DB_PATH)) return null;
+
+  const snapshotName = buildSnapshotName(reason);
+  const snapshotPath = path.join(BACKUP_DIR, snapshotName);
+  fs.copyFileSync(DB_PATH, snapshotPath);
+  pruneSnapshots();
+  return snapshotName;
+}
+
+function hashFileSha256(filePath) {
+  const hash = crypto.createHash('sha256');
+  hash.update(fs.readFileSync(filePath));
+  return hash.digest('hex');
+}
+
+function listSnapshots() {
+  if (!fs.existsSync(BACKUP_DIR)) return [];
+
+  return fs.readdirSync(BACKUP_DIR)
+    .filter((name) => SNAPSHOT_FILE_RE.test(name))
+    .sort()
+    .reverse()
+    .map((name) => {
+      const fullPath = path.join(BACKUP_DIR, name);
+      const stat = fs.statSync(fullPath);
+      const createdAt = stat.mtime.toISOString();
+      const ageHours = (Date.now() - stat.mtime.getTime()) / 3600000;
+      return {
+        name,
+        sizeBytes: stat.size,
+        createdAt,
+        ageHours: Number(ageHours.toFixed(2)),
+        sha256: hashFileSha256(fullPath)
+      };
+    });
+}
+
+function writeDbRaw(raw) {
+  ensureStorageDirs();
+  const tmpPath = DB_PATH + '.tmp';
+  fs.writeFileSync(tmpPath, raw);
+  fs.renameSync(tmpPath, DB_PATH);
+}
+
+function restoreDbSnapshot(snapshotName) {
+  const name = normalizeSnapshotName(snapshotName);
+  const snapshotPath = path.join(BACKUP_DIR, name);
+  if (!fs.existsSync(snapshotPath)) throw fail('Snapshot not found', 404);
+
+  const raw = fs.readFileSync(snapshotPath, 'utf8');
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw fail('Snapshot JSON is invalid', 400);
   }
 
-  const tmpPath = DB_PATH + '.tmp';
-  fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2));
-  fs.renameSync(tmpPath, DB_PATH);
+  if (!parsed || typeof parsed !== 'object') {
+    throw fail('Snapshot payload is invalid', 400);
+  }
+
+  const rollbackGuard = createDbSnapshot('pre-rollback');
+  writeDbRaw(JSON.stringify(parsed, null, 2));
+  return { restoredSnapshot: name, rollbackGuard };
+}
+
+function saveDb(data) {
+  ensureStorageDirs();
+  createDbSnapshot('auto-save');
+  writeDbRaw(JSON.stringify(data, null, 2));
 }
 
 function loadSchedule() {
@@ -4175,6 +4267,302 @@ function getSeasonStandings(data, season) {
   return { driverStandings, constructorStandings };
 }
 
+function parseIsoDate(value) {
+  if (!value) return null;
+  const ts = Date.parse(String(value));
+  return Number.isFinite(ts) ? ts : null;
+}
+
+function latestTimestampForRows(rows, candidateFields = ['updated_at', 'created_at', 'date']) {
+  let latest = null;
+  for (const row of rows || []) {
+    for (const field of candidateFields) {
+      const ts = parseIsoDate(row?.[field]);
+      if (ts !== null && (latest === null || ts > latest)) latest = ts;
+    }
+  }
+  return latest;
+}
+
+function buildDataFreshnessCheck(data, season) {
+  const buckets = [
+    { id: 'predictions', rows: (data.predictions || []).filter((r) => r.season === season), fields: ['updated_at', 'created_at'] },
+    { id: 'season_predictions', rows: (data.season_predictions || []).filter((r) => r.season === season), fields: ['updated_at', 'created_at'] },
+    { id: 'race_actuals', rows: (data.race_actuals || []).filter((r) => r.season === season), fields: ['updated_at', 'created_at', 'date'] },
+    { id: 'race_results', rows: (data.race_results || []).filter((r) => r.season === season), fields: ['updated_at', 'created_at', 'date'] },
+    { id: 'qualifying_results', rows: (data.qualifying_results || []).filter((r) => r.season === season), fields: ['updated_at', 'created_at', 'date'] }
+  ];
+
+  const sources = buckets.map((bucket) => {
+    const latestTs = latestTimestampForRows(bucket.rows, bucket.fields);
+    return {
+      source: bucket.id,
+      rows: bucket.rows.length,
+      latestAt: latestTs === null ? null : new Date(latestTs).toISOString()
+    };
+  });
+
+  const totalRows = sources.reduce((sum, row) => sum + row.rows, 0);
+  const latestAny = sources
+    .map((row) => parseIsoDate(row.latestAt))
+    .filter((ts) => ts !== null)
+    .reduce((best, ts) => (best === null || ts > best ? ts : best), null);
+
+  if (!totalRows) {
+    return {
+      id: 'data_freshness',
+      label: 'Data freshness',
+      status: 'warn',
+      ok: true,
+      message: `No data rows found yet for season ${season}.`,
+      details: { season, totalRows, sources }
+    };
+  }
+
+  if (latestAny === null) {
+    return {
+      id: 'data_freshness',
+      label: 'Data freshness',
+      status: 'warn',
+      ok: true,
+      message: 'Data exists but no timestamp fields were found.',
+      details: { season, totalRows, sources }
+    };
+  }
+
+  const ageHours = (Date.now() - latestAny) / 3600000;
+  let status = 'ok';
+  let ok = true;
+  if (ageHours > 720) {
+    status = 'fail';
+    ok = false;
+  } else if (ageHours > 120) {
+    status = 'warn';
+  }
+
+  const message = status === 'ok'
+    ? `Latest season data is ${(ageHours).toFixed(1)}h old.`
+    : (status === 'warn'
+      ? `Latest season data is ${(ageHours).toFixed(1)}h old (stale warning).`
+      : `Latest season data is ${(ageHours).toFixed(1)}h old (stale failure).`);
+
+  return {
+    id: 'data_freshness',
+    label: 'Data freshness',
+    status,
+    ok,
+    message,
+    details: {
+      season,
+      totalRows,
+      latestAt: new Date(latestAny).toISOString(),
+      ageHours: Number(ageHours.toFixed(2)),
+      sources
+    }
+  };
+}
+
+function buildScheduleValidityCheck(season) {
+  const schedule = getSeasonSchedule(season);
+  if (!schedule.length) {
+    return {
+      id: 'schedule_validity',
+      label: 'Schedule validity',
+      status: 'fail',
+      ok: false,
+      message: `No schedule loaded for season ${season}.`,
+      details: { season, rounds: 0 }
+    };
+  }
+
+  const issues = [];
+  const roundSet = new Set();
+  let missingDates = 0;
+  let outOfOrder = 0;
+  let prevStart = null;
+
+  for (const row of schedule) {
+    if (roundSet.has(row.round)) issues.push(`Duplicate round number: ${row.round}`);
+    roundSet.add(row.round);
+    if (!row.start_date) missingDates += 1;
+    const startTs = parseIsoDate(row.start_date ? `${row.start_date}T00:00:00Z` : null);
+    if (startTs !== null && prevStart !== null && startTs < prevStart) outOfOrder += 1;
+    if (startTs !== null) prevStart = startTs;
+  }
+
+  const sortedRounds = [...roundSet].sort((a, b) => a - b);
+  const gaps = [];
+  if (sortedRounds.length) {
+    for (let expected = sortedRounds[0]; expected <= sortedRounds[sortedRounds.length - 1]; expected += 1) {
+      if (!roundSet.has(expected)) gaps.push(expected);
+    }
+  }
+
+  if (missingDates) issues.push(`${missingDates} rounds missing start_date`);
+  if (outOfOrder) issues.push(`${outOfOrder} rounds out of chronological order`);
+  if (gaps.length) issues.push(`Missing round numbers: ${gaps.join(', ')}`);
+
+  let status = 'ok';
+  let ok = true;
+  if (missingDates || outOfOrder) {
+    status = 'fail';
+    ok = false;
+  } else if (gaps.length) {
+    status = 'warn';
+  }
+
+  return {
+    id: 'schedule_validity',
+    label: 'Schedule validity',
+    status,
+    ok,
+    message: issues.length ? issues.join(' · ') : `Schedule looks valid (${schedule.length} rounds).`,
+    details: {
+      season,
+      rounds: schedule.length,
+      firstRound: schedule[0]?.round || null,
+      lastRound: schedule[schedule.length - 1]?.round || null,
+      gaps,
+      missingDates,
+      outOfOrder
+    }
+  };
+}
+
+async function buildOpenF1ConnectivityCheck(season) {
+  const started = Date.now();
+  try {
+    const meetings = await fetchOpenF1('meetings', { year: season }, 1);
+    const latencyMs = Date.now() - started;
+    const status = meetings.length ? 'ok' : 'warn';
+    return {
+      id: 'openf1_connectivity',
+      label: 'OpenF1 connectivity',
+      status,
+      ok: true,
+      message: meetings.length
+        ? `Connected in ${latencyMs}ms (${meetings.length} meeting rows).`
+        : `Connected in ${latencyMs}ms but received no meeting rows.`,
+      details: {
+        baseUrl: OPENF1_BASE_URL,
+        latencyMs,
+        season,
+        rows: meetings.length
+      }
+    };
+  } catch (error) {
+    return {
+      id: 'openf1_connectivity',
+      label: 'OpenF1 connectivity',
+      status: 'fail',
+      ok: false,
+      message: error?.message || 'OpenF1 connectivity failed.',
+      details: {
+        baseUrl: OPENF1_BASE_URL,
+        season
+      }
+    };
+  }
+}
+
+function buildBackupHealthCheck() {
+  const dbExists = fs.existsSync(DB_PATH);
+  const dbStat = dbExists ? fs.statSync(DB_PATH) : null;
+  const snapshots = listSnapshots();
+
+  if (!dbExists) {
+    return {
+      id: 'backup_health',
+      label: 'DB backup health',
+      status: 'fail',
+      ok: false,
+      message: 'Primary database file is missing.',
+      details: { dbPath: DB_PATH, backups: snapshots.length }
+    };
+  }
+
+  if (!snapshots.length) {
+    return {
+      id: 'backup_health',
+      label: 'DB backup health',
+      status: 'fail',
+      ok: false,
+      message: 'No backup snapshots found.',
+      details: {
+        dbPath: DB_PATH,
+        dbSizeBytes: dbStat?.size || 0,
+        backups: 0
+      }
+    };
+  }
+
+  const latest = snapshots[0];
+  const snapshotPath = path.join(BACKUP_DIR, latest.name);
+  let parseOk = true;
+  try {
+    JSON.parse(fs.readFileSync(snapshotPath, 'utf8'));
+  } catch {
+    parseOk = false;
+  }
+
+  const ageHours = Number(latest.ageHours || 0);
+  let status = 'ok';
+  let ok = true;
+  if (!parseOk) {
+    status = 'fail';
+    ok = false;
+  } else if (ageHours > 168) {
+    status = 'warn';
+  }
+
+  const message = !parseOk
+    ? `Latest snapshot ${latest.name} failed JSON parse.`
+    : (status === 'warn'
+      ? `Latest snapshot is ${ageHours.toFixed(1)}h old.`
+      : `Latest snapshot ${latest.name} is healthy.`);
+
+  return {
+    id: 'backup_health',
+    label: 'DB backup health',
+    status,
+    ok,
+    message,
+    details: {
+      dbPath: DB_PATH,
+      dbSizeBytes: dbStat?.size || 0,
+      backups: snapshots.length,
+      latestSnapshot: latest,
+      latestParseOk: parseOk
+    }
+  };
+}
+
+async function buildHealthCheckReport(season) {
+  const data = loadDb();
+  const checks = [
+    buildDataFreshnessCheck(data, season),
+    await buildOpenF1ConnectivityCheck(season),
+    buildScheduleValidityCheck(season),
+    buildBackupHealthCheck()
+  ];
+
+  const counts = {
+    ok: checks.filter((row) => row.status === 'ok').length,
+    warn: checks.filter((row) => row.status === 'warn').length,
+    fail: checks.filter((row) => row.status === 'fail').length
+  };
+  const status = counts.fail ? 'fail' : (counts.warn ? 'warn' : 'ok');
+
+  return {
+    ok: status !== 'fail',
+    status,
+    checkedAt: new Date().toISOString(),
+    season,
+    counts,
+    checks
+  };
+}
+
 app.get('/api/config', (req, res) => {
   const cfg = loadConfig();
   res.json({ users: cfg.users.map(u => u.name), wildcardRule: cfg.wildcardRule });
@@ -4377,6 +4765,60 @@ app.get('/api/season/rules', (req, res) => {
       'average_points_per_round',
       'latest_round_points'
     ]
+  });
+});
+
+app.get('/api/admin/health-check', async (req, res, next) => {
+  try {
+    const season = toInt(req.query.season) || 2026;
+    const report = await buildHealthCheckReport(season);
+    res.status(report.ok ? 200 : 503).json(report);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/admin/snapshots', (req, res) => {
+  const dbExists = fs.existsSync(DB_PATH);
+  const dbStat = dbExists ? fs.statSync(DB_PATH) : null;
+  const payload = {
+    db: {
+      exists: dbExists,
+      path: DB_PATH,
+      sizeBytes: dbStat?.size || 0,
+      updatedAt: dbStat ? dbStat.mtime.toISOString() : null,
+      sha256: dbExists ? hashFileSha256(DB_PATH) : null
+    },
+    snapshots: listSnapshots()
+  };
+  res.json(payload);
+});
+
+app.post('/api/admin/snapshots', (req, res) => {
+  const { user: userRaw, pin, reason } = req.body || {};
+  const cfg = loadConfig();
+  const user = requireKnownUser(cfg, userRaw, pin);
+  const snapshot = createDbSnapshot(reason || `manual-${user}`);
+  if (!snapshot) throw fail('No database file found to snapshot.', 400);
+
+  res.json({
+    ok: true,
+    snapshot,
+    createdBy: user,
+    totalSnapshots: listSnapshots().length
+  });
+});
+
+app.post('/api/admin/snapshots/rollback', (req, res) => {
+  const { user: userRaw, pin, snapshot } = req.body || {};
+  const cfg = loadConfig();
+  const user = requireKnownUser(cfg, userRaw, pin);
+  const result = restoreDbSnapshot(snapshot);
+
+  res.json({
+    ok: true,
+    restoredBy: user,
+    ...result
   });
 });
 

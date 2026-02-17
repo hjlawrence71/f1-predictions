@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ops</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script>document.documentElement.setAttribute('data-theme', localStorage.getItem('f1-theme') || 'light');</script>
+  </head>
+  <body>
+    <div class="page-max">
+      <button id="themeToggle" class="theme-switch" type="button" aria-label="Toggle theme" aria-pressed="false">
+        <span class="theme-icon sun" aria-hidden="true">☀</span>
+        <span class="theme-icon moon" aria-hidden="true">☾</span>
+        <span class="theme-knob" aria-hidden="true"></span>
+      </button>
+
+      <header class="app-header">
+        <div>
+          <div class="brand">
+            <img class="brand-mark" src="/assets/f1-logo.svg" alt="F1 logo" />
+            <span class="brand-title">Predictions</span>
+          </div>
+          <h1>Ops</h1>
+        </div>
+        <div class="header-actions">
+          <a class="btn ghost" href="/index.html">Weekly picks</a>
+          <a class="btn ghost" href="/season.html">Season hub</a>
+          <a class="btn ghost" href="/driver-radar.html">Intelligence</a>
+          <a class="btn ghost" href="/projections.html">Projection Lab</a>
+          <a class="btn ghost" href="/template.html">Championship</a>
+          <a class="btn ghost" href="/rulebook.html">Rulebook</a>
+          <a class="btn ghost active" aria-current="page" href="/ops.html">Ops</a>
+        </div>
+      </header>
+
+      <section class="card">
+        <div class="ops-toolbar">
+          <label>
+            Season
+            <select id="seasonSelect"></select>
+          </label>
+          <label>
+            User
+            <select id="userSelect"></select>
+          </label>
+          <button id="runHealthBtn" class="btn" type="button">Run Health Check</button>
+          <button id="createSnapshotBtn" class="btn ghost" type="button">Create Snapshot</button>
+          <button id="refreshSnapshotsBtn" class="btn ghost" type="button">Refresh Snapshots</button>
+        </div>
+        <div id="opsStatus" class="pred-results" style="margin-top:10px;">Ready.</div>
+      </section>
+
+      <section class="card">
+        <h2>Health Check</h2>
+        <div id="healthSummary" class="muted">Run health check to inspect system status.</div>
+        <div id="healthChecksGrid" class="health-grid"></div>
+      </section>
+
+      <section class="card">
+        <h2>Snapshots + Rollback</h2>
+        <div id="snapshotDbMeta" class="muted">Loading snapshots...</div>
+        <div class="table" style="margin-top:10px;">
+          <table>
+            <thead>
+              <tr>
+                <th>Snapshot</th>
+                <th>Created</th>
+                <th>Age (h)</th>
+                <th>Size</th>
+                <th>SHA256</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="snapshotsBody"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <script src="/theme.js" type="module"></script>
+    <script src="/ops.js" type="module"></script>
+  </body>
+</html>

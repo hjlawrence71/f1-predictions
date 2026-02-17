@@ -621,6 +621,77 @@ textarea:focus {
   gap: 8px;
 }
 
+.ops-toolbar {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.ops-toolbar label {
+  min-width: 140px;
+}
+
+.health-grid {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.health-card {
+  border: 1px solid #d8e2ef;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #ffffff, #f6f9ff);
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.health-card header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.health-card h3 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.health-card.ok {
+  border-color: #8dc59a;
+}
+
+.health-card.warn {
+  border-color: #e3bc6e;
+}
+
+.health-card.fail {
+  border-color: #e28e8e;
+}
+
+.health-card details summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.health-card pre {
+  margin: 0;
+  max-height: 180px;
+  overflow: auto;
+  background: #f2f6fc;
+  border: 1px solid #dae3ef;
+  border-radius: 8px;
+  padding: 8px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 :root[data-theme='dark'] .template-compare-user {
   border-color: #2d3c54;
   background: linear-gradient(180deg, #131d2e, #0f1726);
@@ -652,6 +723,29 @@ textarea:focus {
   border-color: #3d516f;
   background: #172538;
   color: #c7d6ee;
+}
+
+:root[data-theme='dark'] .health-card {
+  border-color: #2d3d56;
+  background: linear-gradient(180deg, #131d2e, #0f1726);
+}
+
+:root[data-theme='dark'] .health-card.ok {
+  border-color: #2f7a43;
+}
+
+:root[data-theme='dark'] .health-card.warn {
+  border-color: #987531;
+}
+
+:root[data-theme='dark'] .health-card.fail {
+  border-color: #8f3d3d;
+}
+
+:root[data-theme='dark'] .health-card pre {
+  background: #0f1a2d;
+  border-color: #334864;
+  color: #e8f1ff;
 }
 
 .eyebrow {
