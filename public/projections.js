@@ -13,6 +13,9 @@ const pickLikelihoodEl = document.getElementById('projectionPickLikelihood');
 const teamOutlookEl = document.getElementById('projectionTeamOutlook');
 const driverSelect = document.getElementById('projectionDriverSelect');
 const driverBreakdownEl = document.getElementById('projectionDriverBreakdown');
+const championshipMetaEl = document.getElementById('projectionChampionshipMeta');
+const wdcTableEl = document.getElementById('projectionWdcTable');
+const wccTableEl = document.getElementById('projectionWccTable');
 const modelVersionEl = document.getElementById('projectionModelVersion');
 const modelSpecEl = document.getElementById('projectionModelSpec');
 
@@ -58,10 +61,10 @@ function pickDefaultRound(races) {
   return Number(races[races.length - 1].round);
 }
 
-async function fetchJson(url, options = {}, retries = 2) {
+async function fetchJson(url, options = {}, retries = 2, timeoutMs = 15000) {
   for (let attempt = 0; attempt <= retries; attempt += 1) {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 15000);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
       const res = await fetch(url, { ...options, signal: controller.signal });
@@ -231,6 +234,81 @@ function renderTeamOutlook(rows) {
   `).join('');
 }
 
+function renderChampionshipProjection(payload) {
+  const driverRows = payload?.driver_table || [];
+  const constructorRows = payload?.constructor_table || [];
+
+  if (!driverRows.length || !constructorRows.length) {
+    championshipMetaEl.textContent = 'No championship forecast';
+    wdcTableEl.innerHTML = '<div class="muted">No projected WDC rows.</div>';
+    wccTableEl.innerHTML = '<div class="muted">No projected WCC rows.</div>';
+    return;
+  }
+
+  const roundsRemaining = Number(payload?.rounds_remaining || 0);
+  const throughRound = Number(payload?.through_round || 0);
+  championshipMetaEl.textContent = `Rounds remaining ${roundsRemaining} · through R${throughRound}`;
+
+  const driverBody = driverRows.map((row) => `
+    <tr>
+      <td><span class="position-pill">P${row.rank}</span></td>
+      <td>
+        <div class="proj-driver-cell">
+          <strong>${row.driverName}</strong>
+          <small>${displayTeamName(row.team)}</small>
+        </div>
+      </td>
+      <td>${formatNumber(row.current_points, 1)}</td>
+      <td>${formatNumber(row.projected_points_remaining, 1)}</td>
+      <td><strong>${formatNumber(row.projected_total_points, 1)}</strong></td>
+      <td>${formatNumber(row.gap_to_leader, 1)}</td>
+    </tr>
+  `).join('');
+
+  const constructorBody = constructorRows.map((row) => `
+    <tr>
+      <td><span class="position-pill">P${row.rank}</span></td>
+      <td><strong>${displayTeamName(row.team)}</strong></td>
+      <td>${formatNumber(row.current_points, 1)}</td>
+      <td>${formatNumber(row.projected_points_remaining, 1)}</td>
+      <td><strong>${formatNumber(row.projected_total_points, 1)}</strong></td>
+      <td>${formatNumber(row.gap_to_leader, 1)}</td>
+    </tr>
+  `).join('');
+
+  wdcTableEl.innerHTML = `
+    <table class="projection-table">
+      <thead>
+        <tr>
+          <th>Rank</th>
+          <th>Driver</th>
+          <th>Current</th>
+          <th>Remaining</th>
+          <th>Projected</th>
+          <th>Gap</th>
+        </tr>
+      </thead>
+      <tbody>${driverBody}</tbody>
+    </table>
+  `;
+
+  wccTableEl.innerHTML = `
+    <table class="projection-table">
+      <thead>
+        <tr>
+          <th>Rank</th>
+          <th>Team</th>
+          <th>Current</th>
+          <th>Remaining</th>
+          <th>Projected</th>
+          <th>Gap</th>
+        </tr>
+      </thead>
+      <tbody>${constructorBody}</tbody>
+    </table>
+  `;
+}
+
 function populateDriverSelect(rows) {
   driverSelect.innerHTML = '';
   for (const row of rows || []) {
@@ -385,6 +463,22 @@ function queryString(params) {
   return search.toString();
 }
 
+async function fetchProjectionPayload(season, round, user) {
+  const primaryQs = queryString({ season, round, user });
+  try {
+    const payload = await fetchJson(`/api/projections?${primaryQs}`, {}, 2, 45000);
+    return { payload, degraded: false, degradedReason: '' };
+  } catch (primaryError) {
+    const fallbackQs = queryString({ season, round, user, testing: 'off' });
+    const payload = await fetchJson(`/api/projections?${fallbackQs}`, {}, 1, 25000);
+    return {
+      payload,
+      degraded: true,
+      degradedReason: primaryError?.message || 'Primary projection request failed'
+    };
+  }
+}
+
 async function loadRoundsForSeason(season) {
   racesBySeason = await fetchJson(`/api/races?season=${season}`);
   roundSelect.innerHTML = '';
@@ -440,8 +534,8 @@ async function runProjection() {
   statusEl.textContent = 'Running projection model...';
 
   try {
-    const qs = queryString({ season, round, user });
-    const payload = await fetchJson(`/api/projections?${qs}`);
+    const result = await fetchProjectionPayload(season, round, user);
+    const payload = result.payload;
 
     latestProjection = payload;
     updateRaceMeta(payload);
@@ -449,6 +543,7 @@ async function runProjection() {
     renderTrackProfile(payload.track_profile);
     renderPickLikelihood(payload.pick_likelihood);
     renderTeamOutlook(payload.team_outlook || []);
+    renderChampionshipProjection(payload.championship_projection);
     renderModelSpec(payload.model);
 
     populateDriverSelect(payload.race_projection || []);
@@ -459,10 +554,17 @@ async function runProjection() {
       renderDriverBreakdown([], '');
     }
 
-    statusEl.textContent = `Model complete: ${payload.race_name} round ${payload.round}.`;
+    if (result.degraded) {
+      statusEl.textContent = `Model complete with fallback (testing signal off): ${payload.race_name} round ${payload.round}.`;
+    } else {
+      statusEl.textContent = `Model complete: ${payload.race_name} round ${payload.round}.`;
+    }
   } catch (error) {
     statusEl.textContent = `Projection failed: ${error.message}`;
     raceTableEl.innerHTML = `<div class="muted">${error.message}</div>`;
+    wdcTableEl.innerHTML = '<div class="muted">Unable to load WDC projection.</div>';
+    wccTableEl.innerHTML = '<div class="muted">Unable to load WCC projection.</div>';
+    championshipMetaEl.textContent = 'Load failed';
   } finally {
     runBtn.disabled = false;
     runBtn.textContent = 'Run model';

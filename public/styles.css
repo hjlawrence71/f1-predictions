@@ -5206,8 +5206,19 @@ tr.is-pending td {
 }
 
 .projection-breakdown-card,
+.projection-championship-card,
 .projection-model-card {
   margin-top: 14px;
+}
+
+.projection-championship-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.projection-championship-grid h4 {
+  margin: 0 0 8px;
 }
 
 .projection-breakdown-card .projection-card-head {
@@ -5368,7 +5379,8 @@ tr.is-pending td {
   }
 
   .model-weights-grid,
-  .model-notes-grid {
+  .model-notes-grid,
+  .projection-championship-grid {
     grid-template-columns: 1fr;
   }
 }
@@ -5613,6 +5625,7 @@ body {
   .projection-picks-card,
   .projection-team-card,
   .projection-breakdown-card,
+  .projection-championship-card,
   .projection-model-card {
     padding: 12px;
   }

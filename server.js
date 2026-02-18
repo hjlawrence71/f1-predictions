@@ -2389,6 +2389,7 @@ const PROJECTION_POINTS_TABLE = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1];
 const PROJECTION_MODEL_SPEC = {
   version: '2026.3',
   simulation_runs: 5000,
+  championship_simulation_runs_per_round: 600,
   qualifying_weights: {
     qual_pace: 0.27,
     q3_presence: 0.12,
@@ -3445,10 +3446,12 @@ function buildProjectionDrivers(data, season, round, options = {}) {
   };
 }
 
-function runProjectionSimulation(projectionDrivers, season, round, user) {
-  const runs = PROJECTION_MODEL_SPEC.simulation_runs;
+function runProjectionSimulation(projectionDrivers, season, round, user, options = {}) {
+  const runsOverride = toInt(options.runs);
+  const runs = Math.max(200, runsOverride || PROJECTION_MODEL_SPEC.simulation_runs);
   const fieldSize = projectionDrivers.length;
-  const seed = (season * 1009) + (round * 97) + hashString(user || 'all-users');
+  const seedSalt = String(options.seedSalt || '');
+  const seed = (season * 1009) + (round * 97) + hashString((user || 'all-users') + ':' + seedSalt + ':' + runs);
   const rng = seededRandom(seed);
 
   const positionCounts = new Map();
@@ -3547,6 +3550,137 @@ function runProjectionSimulation(projectionDrivers, season, round, user) {
     qualifyingPositionCounts,
     fastestLapCounts,
     podiumOrderCounts
+  };
+}
+
+function buildChampionshipProjection(data, season, fromRound, includeTesting = true) {
+  const schedule = getSeasonSchedule(season)
+    .slice()
+    .sort((a, b) => a.round - b.round);
+  const remainingRounds = schedule.filter((row) => row.round >= fromRound);
+  const throughRound = Math.max(0, fromRound - 1);
+  const simulationRuns = PROJECTION_MODEL_SPEC.championship_simulation_runs_per_round || 600;
+
+  const grid = resolveGridDrivers(data, season);
+  const driverMetaById = new Map();
+  const teamByDriverId = new Map();
+  for (const row of grid) {
+    const driverId = row.driverId;
+    const team = displayTeamName(row.team);
+    driverMetaById.set(driverId, {
+      driverId,
+      driverName: row.driverName || driverId,
+      team
+    });
+    teamByDriverId.set(driverId, team);
+  }
+
+  const currentPointsByDriver = new Map();
+  for (const row of grid) currentPointsByDriver.set(row.driverId, 0);
+
+  for (const row of data.race_results || []) {
+    if (row.season !== season) continue;
+    if (toInt(row.round) === null || row.round >= fromRound) continue;
+    if (!row.driverId) continue;
+    const points = toFiniteNumber(row.points) || 0;
+    currentPointsByDriver.set(row.driverId, (currentPointsByDriver.get(row.driverId) || 0) + points);
+  }
+
+  const futurePointsByDriver = new Map([...currentPointsByDriver.keys()].map((driverId) => [driverId, 0]));
+  const projectedWinsByDriver = new Map([...currentPointsByDriver.keys()].map((driverId) => [driverId, 0]));
+  const usedRounds = [];
+
+  for (const race of remainingRounds) {
+    const projectionBase = buildProjectionDrivers(data, season, race.round, { includeTesting });
+    const sim = runProjectionSimulation(projectionBase.drivers, season, race.round, null, {
+      runs: simulationRuns,
+      seedSalt: 'championship'
+    });
+    const table = buildProjectionTables(sim, projectionBase.drivers);
+    usedRounds.push({
+      round: race.round,
+      raceName: race.raceName,
+      date: race.start_date
+    });
+
+    for (const row of table.raceRows || []) {
+      futurePointsByDriver.set(row.driverId, (futurePointsByDriver.get(row.driverId) || 0) + (toFiniteNumber(row.expected_points) || 0));
+      projectedWinsByDriver.set(row.driverId, (projectedWinsByDriver.get(row.driverId) || 0) + (toFiniteNumber(row.probabilities?.win) || 0));
+    }
+  }
+
+  const driverRows = [...currentPointsByDriver.keys()].map((driverId) => {
+    const meta = driverMetaById.get(driverId) || { driverId, driverName: driverId, team: teamByDriverId.get(driverId) || 'Unknown' };
+    const current = toFiniteNumber(currentPointsByDriver.get(driverId)) || 0;
+    const future = toFiniteNumber(futurePointsByDriver.get(driverId)) || 0;
+    const projectedTotal = current + future;
+    return {
+      driverId,
+      driverName: meta.driverName,
+      team: meta.team,
+      current_points: roundTo(current, 2),
+      projected_points_remaining: roundTo(future, 2),
+      projected_total_points: roundTo(projectedTotal, 2),
+      projected_wins: roundTo(toFiniteNumber(projectedWinsByDriver.get(driverId)) || 0, 2)
+    };
+  }).sort((a, b) =>
+    (b.projected_total_points - a.projected_total_points) ||
+    (b.projected_wins - a.projected_wins) ||
+    a.driverName.localeCompare(b.driverName)
+  );
+
+  const leaderDriverTotal = driverRows.length ? driverRows[0].projected_total_points : 0;
+  driverRows.forEach((row, index) => {
+    row.rank = index + 1;
+    row.gap_to_leader = roundTo(leaderDriverTotal - row.projected_total_points, 2);
+  });
+
+  const constructorCurrent = new Map();
+  const constructorFuture = new Map();
+  const constructorWins = new Map();
+
+  for (const row of driverRows) {
+    const team = displayTeamName(row.team);
+    constructorCurrent.set(team, (constructorCurrent.get(team) || 0) + (toFiniteNumber(row.current_points) || 0));
+    constructorFuture.set(team, (constructorFuture.get(team) || 0) + (toFiniteNumber(row.projected_points_remaining) || 0));
+    constructorWins.set(team, (constructorWins.get(team) || 0) + (toFiniteNumber(row.projected_wins) || 0));
+  }
+
+  const constructorRows = [...constructorCurrent.keys()].map((team) => {
+    const current = constructorCurrent.get(team) || 0;
+    const future = constructorFuture.get(team) || 0;
+    const projectedTotal = current + future;
+    return {
+      team,
+      current_points: roundTo(current, 2),
+      projected_points_remaining: roundTo(future, 2),
+      projected_total_points: roundTo(projectedTotal, 2),
+      projected_wins: roundTo(constructorWins.get(team) || 0, 2)
+    };
+  }).sort((a, b) =>
+    (b.projected_total_points - a.projected_total_points) ||
+    (b.projected_wins - a.projected_wins) ||
+    a.team.localeCompare(b.team)
+  );
+
+  const leaderConstructorTotal = constructorRows.length ? constructorRows[0].projected_total_points : 0;
+  constructorRows.forEach((row, index) => {
+    row.rank = index + 1;
+    row.gap_to_leader = roundTo(leaderConstructorTotal - row.projected_total_points, 2);
+  });
+
+  return {
+    season,
+    from_round: fromRound,
+    through_round: throughRound,
+    to_round: schedule.length ? schedule[schedule.length - 1].round : fromRound,
+    rounds_remaining: remainingRounds.length,
+    simulation_runs_per_round: simulationRuns,
+    include_testing_signal: includeTesting,
+    method: 'Current points through previous round + expected points from projected remaining rounds.',
+    rounds_used: usedRounds,
+    driver_table: driverRows,
+    constructor_table: constructorRows
   };
 }
 
@@ -3784,6 +3918,7 @@ function projectRoundOutcomes(data, season, round, user = null, options = {}) {
   const picks = evaluatePickLikelihood(data, season, round, user, projectionTable, simResult);
   const teamOutlook = buildTeamOutlook(projectionTable.raceRows);
   const practiceSignalSummary = buildPracticeSignalSummary(projectionBase.drivers);
+  const championshipProjection = buildChampionshipProjection(data, season, round, projectionBase.includeTesting);
 
   return {
     season,
@@ -3807,6 +3942,7 @@ function projectRoundOutcomes(data, season, round, user = null, options = {}) {
     race_projection: projectionTable.raceRows,
     qualifying_projection: projectionTable.qualifyingRows,
     team_outlook: teamOutlook,
+    championship_projection: championshipProjection,
     pick_likelihood: picks
   };
 }
