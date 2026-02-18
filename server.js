@@ -376,6 +376,7 @@ function seedDemoData(roundCount = 8) {
     qualifying_results,
     qualifying_timing: [],
     practice_timing: [],
+    testing_timing: [],
     race_results,
     race_timing: [],
     race_actuals,
@@ -522,6 +523,7 @@ function loadDb() {
       qualifying_results: [],
       qualifying_timing: [],
       practice_timing: [],
+      testing_timing: [],
       race_results: [],
       race_timing: [],
       race_actuals: [],
@@ -533,6 +535,7 @@ function loadDb() {
   const data = JSON.parse(raw);
   if (!data.qualifying_timing) data.qualifying_timing = [];
   if (!data.practice_timing) data.practice_timing = [];
+  if (!data.testing_timing) data.testing_timing = [];
   if (!data.race_timing) data.race_timing = [];
   if (!data.season_predictions) data.season_predictions = [];
   if (!Array.isArray(data.driver_seasons)) data.driver_seasons = [];
@@ -1050,7 +1053,7 @@ async function fetchOpenF1(resource, params = {}, retries = 3) {
 function selectOpenF1Meeting(meetings, season, round, scheduleRow) {
   const raceMeetings = (meetings || [])
     .filter((m) => m.year === season)
-    .filter((m) => !/testing/i.test(String(m.meeting_name || '')))
+    .filter((m) => !isTestingMeeting(m))
     .sort((a, b) => toEpochMs(a.date_start) - toEpochMs(b.date_start));
 
   if (!raceMeetings.length) return null;
@@ -1083,6 +1086,18 @@ function selectOpenF1Meeting(meetings, season, round, scheduleRow) {
   }
 
   return best || fallback;
+}
+
+function isTestingMeeting(meeting) {
+  const label = `${meeting?.meeting_name || ''} ${meeting?.meeting_official_name || ''}`.toLowerCase();
+  return /\btest(?:ing)?\b/.test(label);
+}
+
+function selectOpenF1TestingMeetings(meetings, season) {
+  return (meetings || [])
+    .filter((m) => m.year === season)
+    .filter((m) => isTestingMeeting(m))
+    .sort((a, b) => toEpochMs(a.date_start) - toEpochMs(b.date_start));
 }
 
 function selectSessionByType(sessions, targetType) {
@@ -1136,6 +1151,17 @@ function selectPracticeSessions(sessions) {
   }
 
   return selected;
+}
+
+function detectTestingDayIndex(session, fallbackIndex = 0) {
+  const name = String(session?.session_name || '');
+  const explicit = name.match(/day\s*([123])/i);
+  if (explicit) {
+    const day = toInt(explicit[1]);
+    if (day && day >= 1 && day <= 3) return day;
+  }
+  const fallback = Math.max(1, Math.min(3, fallbackIndex + 1));
+  return fallback;
 }
 
 function ensureDriverRecord(data, identity) {
@@ -2361,7 +2387,7 @@ function computeIntelligenceViewRows(data, season, viewRaw = 'season', options =
 const PROJECTION_POINTS_TABLE = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1];
 
 const PROJECTION_MODEL_SPEC = {
-  version: '2026.2',
+  version: '2026.3',
   simulation_runs: 5000,
   qualifying_weights: {
     qual_pace: 0.27,
@@ -2391,7 +2417,8 @@ const PROJECTION_MODEL_SPEC = {
     'Missing stint compound data falls back to team tyre-management prior.',
     'Unknown race profile falls back to a neutral mixed-track profile.',
     'Blended intelligence uses season-to-date signal plus 2023-2025 priors.',
-    'Practice signals decay to neutral when FP data is sparse or unavailable.',
+    'Practice signal blends race-weekend FP with pre-season testing when available.',
+    'Testing signal carries strongest influence in early rounds, then decays as race data grows.',
     'DNF simulation probability is clamped to avoid unrealistic extremes.'
   ],
   feature_notes: {
@@ -2401,7 +2428,7 @@ const PROJECTION_MODEL_SPEC = {
     tire_fit: 'Expected-compound fit derived from stint pace by compound.',
     momentum: 'Recent trend and momentum index translated into a 0-1 score.',
     strategy_tire_fit: 'Tyre fit blended with team strategy execution prior.',
-    practice_signal: 'FP1-FP3 short-run and long-run pace folded into round-level likelihood.'
+    practice_signal: 'FP1-FP3 plus pre-season testing short/long-run pace folded into round-level likelihood.'
   },
   simulation: {
     dnf_probability_floor: 0.02,
@@ -2892,7 +2919,302 @@ function buildPracticeSignalsForRound(data, season, round, grid, teamTraits, tra
   return result;
 }
 
-function buildProjectionDrivers(data, season, round) {
+function testingSeasonDecayFactor(round) {
+  const currentRound = Math.max(1, toInt(round) || 1);
+  if (currentRound <= 3) return 1;
+  if (currentRound >= 12) return 0.35;
+  return clamp(1 - (((currentRound - 3) / 9) * 0.65), 0.35, 1);
+}
+
+function buildTestingSignalsForSeason(data, season, round, grid, teamTraits, trackProfile) {
+  const testingRows = (data.testing_timing || [])
+    .filter((row) => row.season === season && row.driverId)
+    .filter((row) => !row.is_deleted && toFiniteNumber(row.lap_time_ms) !== null);
+
+  if (!testingRows.length) return new Map();
+
+  const sessionSortKey = (row) => {
+    const order = toInt(row.session_order);
+    if (order !== null) return order;
+    const ts = toEpochMs(row.date_start);
+    if (ts !== null) return ts;
+    return 0;
+  };
+
+  const rowsBySession = new Map();
+  for (const row of testingRows) {
+    const sessionKey = toInt(row.session_key);
+    if (!sessionKey) continue;
+    if (!rowsBySession.has(sessionKey)) rowsBySession.set(sessionKey, []);
+    rowsBySession.get(sessionKey).push(row);
+  }
+
+  const orderedSessionKeys = [...rowsBySession.entries()]
+    .sort((a, b) => sessionSortKey(a[1][0]) - sessionSortKey(b[1][0]))
+    .map(([sessionKey]) => sessionKey);
+  const sessionRankByKey = new Map(orderedSessionKeys.map((sessionKey, idx) => [sessionKey, idx + 1]));
+  const maxSessionRank = Math.max(1, orderedSessionKeys.length);
+  const seasonDecay = testingSeasonDecayFactor(round);
+
+  const byDriver = new Map();
+  for (const row of testingRows) {
+    const driverId = row.driverId;
+    if (!driverId) continue;
+    if (!byDriver.has(driverId)) byDriver.set(driverId, new Map());
+    const driverSessions = byDriver.get(driverId);
+    const sessionKey = toInt(row.session_key);
+    if (!sessionKey) continue;
+    if (!driverSessions.has(sessionKey)) driverSessions.set(sessionKey, []);
+    driverSessions.get(sessionKey).push(row);
+  }
+
+  const raw = [];
+
+  for (const driver of grid) {
+    const sessionMap = byDriver.get(driver.driverId);
+    if (!sessionMap) continue;
+
+    const sessionSummaries = [];
+    const allCompoundRows = [];
+
+    for (const [sessionKey, rows] of sessionMap.entries()) {
+      const orderedRows = rows
+        .slice()
+        .sort((a, b) => (toInt(a.lap) || 0) - (toInt(b.lap) || 0));
+      if (!orderedRows.length) continue;
+
+      const lapSeries = orderedRows
+        .map((row) => toFiniteNumber(row.lap_time_ms))
+        .filter((n) => n !== null);
+      if (!lapSeries.length) continue;
+
+      const sortedFastest = [...lapSeries].sort((a, b) => a - b);
+      const shortRunMs = avg(sortedFastest.slice(0, Math.min(3, sortedFastest.length)));
+      const longRunMs = median(lapSeries);
+      const consistencyMs = stddev(lapSeries);
+      const degradationMsPerLap = slope(lapSeries);
+
+      const compoundLapMap = new Map();
+      for (const row of orderedRows) {
+        const lapMs = toFiniteNumber(row.lap_time_ms);
+        if (lapMs === null) continue;
+        const compound = normalizeCompound(row.compound);
+        if (!compound) continue;
+        if (!compoundLapMap.has(compound)) compoundLapMap.set(compound, []);
+        compoundLapMap.get(compound).push(lapMs);
+      }
+
+      const compoundRows = [...compoundLapMap.entries()].map(([compound, laps]) => ({
+        compound,
+        avg_lap_ms: roundTo(avg(laps), 0)
+      }));
+      for (const row of compoundRows) allCompoundRows.push(row);
+
+      const rank = sessionRankByKey.get(sessionKey) || 1;
+      const recencyWeight = 0.6 + (0.4 * (rank / maxSessionRank));
+      const sampleWeight = 0.7 + (0.3 * clamp(lapSeries.length / 50));
+      const sessionWeight = recencyWeight * sampleWeight;
+
+      sessionSummaries.push({
+        session_key: sessionKey,
+        session_weight: sessionWeight,
+        lap_count: lapSeries.length,
+        short_run_ms: shortRunMs,
+        long_run_ms: longRunMs,
+        consistency_ms: consistencyMs,
+        degradation_ms_per_lap: degradationMsPerLap,
+        compound_fit: computeTireFitScore(compoundRows, trackProfile.expected_compounds)
+      });
+    }
+
+    if (!sessionSummaries.length) continue;
+
+    const weightedMetric = (key) => {
+      let sum = 0;
+      let weight = 0;
+      for (const row of sessionSummaries) {
+        const value = toFiniteNumber(row[key]);
+        const rowWeight = toFiniteNumber(row.session_weight);
+        if (value === null || rowWeight === null || rowWeight <= 0) continue;
+        sum += value * rowWeight;
+        weight += rowWeight;
+      }
+      return weight ? (sum / weight) : null;
+    };
+
+    const lapCount = sessionSummaries.reduce((acc, row) => acc + (toInt(row.lap_count) || 0), 0);
+    const compoundFit = computeTireFitScore(allCompoundRows, trackProfile.expected_compounds);
+
+    raw.push({
+      driverId: driver.driverId,
+      team: displayTeamName(driver.team),
+      short_run_ms: weightedMetric('short_run_ms'),
+      long_run_ms: weightedMetric('long_run_ms'),
+      consistency_ms: weightedMetric('consistency_ms'),
+      degradation_ms_per_lap: weightedMetric('degradation_ms_per_lap'),
+      lap_count: lapCount,
+      sessions_seen: sessionSummaries.length,
+      compound_fit: compoundFit === null ? weightedMetric('compound_fit') : compoundFit
+    });
+  }
+
+  if (!raw.length) return new Map();
+
+  const shortRunValues = raw.map((row) => row.short_run_ms).filter((n) => toFiniteNumber(n) !== null);
+  const longRunValues = raw.map((row) => row.long_run_ms).filter((n) => toFiniteNumber(n) !== null);
+  const consistencyValues = raw.map((row) => row.consistency_ms).filter((n) => toFiniteNumber(n) !== null);
+  const degradationValues = raw.map((row) => row.degradation_ms_per_lap).filter((n) => toFiniteNumber(n) !== null);
+  const lapCountValues = raw.map((row) => row.lap_count).filter((n) => toFiniteNumber(n) !== null);
+
+  const result = new Map();
+
+  for (const row of raw) {
+    const shortRunScore = rankScore(row.short_run_ms, shortRunValues, true);
+    const longRunScore = rankScore(row.long_run_ms, longRunValues, true);
+    const consistencyScore = rankScore(row.consistency_ms, consistencyValues, true);
+    const degradationScore = rankScore(row.degradation_ms_per_lap, degradationValues, true);
+    const lapCountScore = rankScore(row.lap_count, lapCountValues, false);
+    const compoundScore = toFiniteNumber(row.compound_fit) === null ? 0.5 : clamp(row.compound_fit);
+
+    const qualRaw = clamp(
+      (shortRunScore * 0.46) +
+      (consistencyScore * 0.2) +
+      (compoundScore * 0.2) +
+      (lapCountScore * 0.14)
+    );
+
+    const raceRaw = clamp(
+      (longRunScore * 0.36) +
+      (degradationScore * 0.21) +
+      (consistencyScore * 0.19) +
+      (compoundScore * 0.15) +
+      (lapCountScore * 0.09)
+    );
+
+    const sessionCoverage = clamp((toFiniteNumber(row.sessions_seen) || 0) / 6);
+    const lapCoverage = clamp((toFiniteNumber(row.lap_count) || 0) / 220);
+    const metricCoverage = [
+      row.short_run_ms,
+      row.long_run_ms,
+      row.consistency_ms,
+      row.degradation_ms_per_lap,
+      row.compound_fit
+    ].filter((n) => toFiniteNumber(n) !== null).length / 5;
+
+    const confidenceBase = clamp(
+      (sessionCoverage * 0.4) +
+      (lapCoverage * 0.35) +
+      (metricCoverage * 0.25)
+    );
+
+    const confidence = clamp(confidenceBase * seasonDecay * 0.85, 0, 0.75);
+    const trait = teamTraits.get(row.team) || normalizeTeamTraitRow({});
+
+    const qualPrior = clamp(
+      (trait.downforce * 0.34) +
+      (trait.traction * 0.2) +
+      (trackProfile.downforce * 0.28) +
+      (trackProfile.traction * 0.18)
+    );
+
+    const racePrior = clamp(
+      (trait.high_speed * 0.22) +
+      (trait.degradation * 0.26) +
+      (trait.strategy * 0.14) +
+      (trackProfile.degradation * 0.2) +
+      (trackProfile.high_speed * 0.18)
+    );
+
+    result.set(row.driverId, {
+      qual_signal: blendByConfidence(qualRaw, qualPrior, confidence),
+      race_signal: blendByConfidence(raceRaw, racePrior, confidence),
+      confidence,
+      lap_count: row.lap_count,
+      sessions_seen: row.sessions_seen,
+      season_decay: seasonDecay
+    });
+  }
+
+  return result;
+}
+
+function mergePracticeSignals(weekendSignal, testingSignal) {
+  const weekend = weekendSignal || null;
+  const testing = testingSignal || null;
+  if (!weekend && !testing) return null;
+
+  if (weekend && !testing) {
+    return {
+      ...weekend,
+      source: 'weekend',
+      weekend_confidence: clamp(toFiniteNumber(weekend.confidence) ?? 0),
+      testing_confidence: 0
+    };
+  }
+
+  if (!weekend && testing) {
+    const testingConfidence = clamp(toFiniteNumber(testing.confidence) ?? 0);
+    return {
+      ...testing,
+      source: 'testing',
+      confidence: clamp(testingConfidence * 0.85),
+      weekend_confidence: 0,
+      testing_confidence: testingConfidence
+    };
+  }
+
+  const weekendConfidence = clamp(toFiniteNumber(weekend.confidence) ?? 0);
+  const testingConfidence = clamp(toFiniteNumber(testing.confidence) ?? 0);
+  const testingInfluence = clamp(testingConfidence * (1 - weekendConfidence) * 0.8, 0, 0.45);
+  const qualSignal = clamp(((toFiniteNumber(weekend.qual_signal) ?? 0.5) * (1 - testingInfluence)) + ((toFiniteNumber(testing.qual_signal) ?? 0.5) * testingInfluence));
+  const raceSignal = clamp(((toFiniteNumber(weekend.race_signal) ?? 0.5) * (1 - testingInfluence)) + ((toFiniteNumber(testing.race_signal) ?? 0.5) * testingInfluence));
+  const confidence = clamp(weekendConfidence + (testingConfidence * 0.25 * (1 - weekendConfidence)));
+
+  return {
+    qual_signal: qualSignal,
+    race_signal: raceSignal,
+    confidence,
+    lap_count: (toInt(weekend.lap_count) || 0) + (toInt(testing.lap_count) || 0),
+    sessions_seen: (toInt(weekend.sessions_seen) || 0) + (toInt(testing.sessions_seen) || 0),
+    source: 'weekend+testing',
+    weekend_confidence: weekendConfidence,
+    testing_confidence: testingConfidence,
+    testing_season_decay: toFiniteNumber(testing.season_decay)
+  };
+}
+
+function buildPracticeSignalSummary(drivers) {
+  const summary = {
+    weekend_only: 0,
+    testing_only: 0,
+    blended: 0,
+    none: 0,
+    average_confidence: 0,
+    drivers_with_testing_signal: 0
+  };
+
+  if (!Array.isArray(drivers) || !drivers.length) return summary;
+
+  let confidenceSum = 0;
+
+  for (const driver of drivers) {
+    const context = driver.practice_context || {};
+    const source = context.source || 'none';
+    if (source === 'weekend') summary.weekend_only += 1;
+    else if (source === 'testing') summary.testing_only += 1;
+    else if (source === 'weekend+testing') summary.blended += 1;
+    else summary.none += 1;
+
+    if ((toFiniteNumber(context.testing_confidence) || 0) > 0) summary.drivers_with_testing_signal += 1;
+    confidenceSum += (toFiniteNumber(context.confidence) || 0);
+  }
+
+  summary.average_confidence = drivers.length ? roundTo(confidenceSum / drivers.length, 4) : 0;
+  return summary;
+}
+
+function buildProjectionDrivers(data, season, round, options = {}) {
+  const includeTesting = options.includeTesting !== false;
   const cutoffRound = Math.max(0, round - 1);
   const schedule = getSeasonSchedule(season);
   const race = schedule.find((row) => row.round === round);
@@ -2908,7 +3230,10 @@ function buildProjectionDrivers(data, season, round) {
   });
   const intelByDriver = new Map(intelligence.map((row) => [row.driverId, row]));
   const teamTraits = buildProjectionTeamTraits(data, season, cutoffRound, grid);
-  const practiceSignals = buildPracticeSignalsForRound(data, season, round, grid, teamTraits, trackProfile);
+  const weekendPracticeSignals = buildPracticeSignalsForRound(data, season, round, grid, teamTraits, trackProfile);
+  const testingSignals = includeTesting
+    ? buildTestingSignalsForSeason(data, season, round, grid, teamTraits, trackProfile)
+    : new Map();
 
   const roundsByDriver = new Map();
   for (const row of data.race_results || []) {
@@ -2926,7 +3251,9 @@ function buildProjectionDrivers(data, season, round) {
     const qi = stats.qualifying_intel || {};
     const ri = stats.race_intel || {};
     const ci = stats.combined_intel || {};
-    const practice = practiceSignals.get(driver.driverId) || null;
+    const weekendPractice = weekendPracticeSignals.get(driver.driverId) || null;
+    const testingPractice = testingSignals.get(driver.driverId) || null;
+    const practice = mergePracticeSignals(weekendPractice, testingPractice);
 
     const fieldSize = grid.length;
     const practiceConfidence = clamp(toFiniteNumber(practice?.confidence) ?? 0, 0, 1);
@@ -3081,6 +3408,13 @@ function buildProjectionDrivers(data, season, round) {
       reliability,
       qualifying_score: qualifyingScore,
       race_score: raceScore,
+      practice_context: {
+        source: practice?.source || 'none',
+        confidence: practiceConfidence,
+        weekend_confidence: toFiniteNumber(practice?.weekend_confidence) || 0,
+        testing_confidence: toFiniteNumber(practice?.testing_confidence) || 0,
+        testing_season_decay: toFiniteNumber(practice?.testing_season_decay) || null
+      },
       metrics: {
         qual_pace: qualPace,
         race_pace: racePace,
@@ -3096,7 +3430,8 @@ function buildProjectionDrivers(data, season, round) {
         start_craft: startCraft,
         sample_score: sampleScore,
         coverage,
-        head_to_head_score: h2hScore
+        head_to_head_score: h2hScore,
+        practice_confidence: practiceConfidence
       }
     });
   }
@@ -3105,6 +3440,7 @@ function buildProjectionDrivers(data, season, round) {
     cutoffRound,
     race,
     trackProfile,
+    includeTesting,
     drivers: qualifiers
   };
 }
@@ -3441,12 +3777,13 @@ function buildTeamOutlook(raceRows) {
     .sort((a, b) => (b.avg_expected_points || 0) - (a.avg_expected_points || 0));
 }
 
-function projectRoundOutcomes(data, season, round, user = null) {
-  const projectionBase = buildProjectionDrivers(data, season, round);
+function projectRoundOutcomes(data, season, round, user = null, options = {}) {
+  const projectionBase = buildProjectionDrivers(data, season, round, options);
   const simResult = runProjectionSimulation(projectionBase.drivers, season, round, user);
   const projectionTable = buildProjectionTables(simResult, projectionBase.drivers);
   const picks = evaluatePickLikelihood(data, season, round, user, projectionTable, simResult);
   const teamOutlook = buildTeamOutlook(projectionTable.raceRows);
+  const practiceSignalSummary = buildPracticeSignalSummary(projectionBase.drivers);
 
   return {
     season,
@@ -3458,6 +3795,10 @@ function projectRoundOutcomes(data, season, round, user = null) {
       rounds_used: projectionBase.cutoffRound
     },
     model: PROJECTION_MODEL_SPEC,
+    practice_signal: {
+      includes_testing: projectionBase.includeTesting,
+      summary: practiceSignalSummary
+    },
     track_profile: projectionBase.trackProfile,
     simulation: {
       runs: simResult.runs,
@@ -3467,6 +3808,190 @@ function projectRoundOutcomes(data, season, round, user = null) {
     qualifying_projection: projectionTable.qualifyingRows,
     team_outlook: teamOutlook,
     pick_likelihood: picks
+  };
+}
+
+async function importOpenF1TestingSeason({ season, force = false }) {
+  const data = loadDb();
+  ensureSeasonRaces(data, season);
+
+  const meetings = await fetchOpenF1('meetings', { year: season });
+  const testingMeetings = selectOpenF1TestingMeetings(meetings, season);
+
+  if (!testingMeetings.length) {
+    throw fail(`OpenF1 testing meetings not found for season ${season}`, 404);
+  }
+
+  const existingRows = (data.testing_timing || []).filter((row) => row.season === season);
+  const expectedMeetingKeys = new Set(testingMeetings.map((meeting) => toInt(meeting.meeting_key)).filter(Boolean));
+  const coveredMeetingKeys = new Set(existingRows.map((row) => toInt(row.meeting_key)).filter(Boolean));
+  const hasFullCoverage = existingRows.length > 0 && [...expectedMeetingKeys].every((key) => coveredMeetingKeys.has(key));
+
+  if (!force && hasFullCoverage) {
+    return {
+      season,
+      reused: true,
+      imported: { testingTiming: 0 },
+      meetings: testingMeetings.map((meeting) => ({
+        key: meeting.meeting_key,
+        name: meeting.meeting_name || null,
+        date_start: meeting.date_start || null
+      })),
+      totalRows: existingRows.length
+    };
+  }
+
+  const resolveOpenF1Driver = buildOpenF1DriverResolver(data, season);
+  const testingTimingRows = [];
+  let sessionOrder = 0;
+  let sessionCount = 0;
+
+  for (let meetingIndex = 0; meetingIndex < testingMeetings.length; meetingIndex += 1) {
+    const meeting = testingMeetings[meetingIndex];
+    const meetingKey = toInt(meeting.meeting_key);
+    if (!meetingKey) continue;
+
+    const sessions = await fetchOpenF1('sessions', { meeting_key: meetingKey });
+    const testingSessions = selectPracticeSessions(sessions);
+
+    if (!testingSessions.length) continue;
+
+    for (let sessionIndex = 0; sessionIndex < testingSessions.length; sessionIndex += 1) {
+      const session = testingSessions[sessionIndex];
+      const sessionKey = toInt(session.session_key);
+      if (!sessionKey) continue;
+      sessionCount += 1;
+      sessionOrder += 1;
+
+      await sleep(220);
+      const driverRows = await fetchOpenF1('drivers', { session_key: sessionKey });
+      const driverMetaByNumber = new Map();
+      for (const row of driverRows || []) {
+        const driverNumber = toInt(row.driver_number);
+        if (!driverNumber) continue;
+        driverMetaByNumber.set(driverNumber, row);
+      }
+
+      const getIdentity = (driverNumber) => {
+        if (!driverNumber) return null;
+        const meta = driverMetaByNumber.get(driverNumber) || { driver_number: driverNumber };
+        const identity = resolveOpenF1Driver(meta, driverNumber);
+        ensureDriverRecord(data, identity);
+        ensureSeasonDriverRecord(data, season, identity, meta.team_name);
+        return identity;
+      };
+
+      await sleep(220);
+      const stintRowsRaw = await fetchOpenF1('stints', { session_key: sessionKey });
+      const stintByDriverLap = new Map();
+      for (const row of stintRowsRaw || []) {
+        const driverNumber = toInt(row.driver_number);
+        const lapStart = toInt(row.lap_start);
+        const lapEnd = toInt(row.lap_end);
+        if (!driverNumber || !lapStart || !lapEnd) continue;
+
+        for (let lap = lapStart; lap <= lapEnd; lap += 1) {
+          stintByDriverLap.set(`${driverNumber}:${lap}`, {
+            stint: toInt(row.stint_number),
+            compound: normalizeCompound(row.compound)
+          });
+        }
+      }
+
+      await sleep(220);
+      const lapRows = await fetchOpenF1('laps', { session_key: sessionKey });
+      const dayIndex = detectTestingDayIndex(session, sessionIndex);
+
+      for (const row of lapRows || []) {
+        const driverNumber = toInt(row.driver_number);
+        const lap = toInt(row.lap_number);
+        const lapMs = parseOpenF1SecondsToMs(row.lap_duration);
+        if (!driverNumber || !lap || lapMs === null) continue;
+        if (row.is_pit_out_lap) continue;
+
+        const identity = getIdentity(driverNumber);
+        if (!identity) continue;
+
+        const stintInfo = stintByDriverLap.get(`${driverNumber}:${lap}`) || {};
+        const isDeleted = row.is_lap_valid === false || row.is_deleted === true;
+
+        testingTimingRows.push({
+          season,
+          meeting_key: meetingKey,
+          meeting_name: meeting.meeting_name || null,
+          session_key: sessionKey,
+          session_name: session.session_name || session.session_type || null,
+          session_order: sessionOrder,
+          meeting_order: meetingIndex + 1,
+          day_index: dayIndex,
+          driverId: identity.driverId,
+          lap,
+          lap_time_ms: lapMs,
+          is_deleted: Boolean(isDeleted),
+          stint: stintInfo.stint || null,
+          compound: stintInfo.compound || normalizeCompound(row.compound),
+          date_start: row.date_start || row.date || null
+        });
+      }
+    }
+  }
+
+  if (!testingTimingRows.length) {
+    throw fail(`OpenF1 testing lap data unavailable for season ${season}`, 409);
+  }
+
+  data.testing_timing = (data.testing_timing || []).filter((row) => row.season !== season);
+  data.testing_timing.push(...testingTimingRows);
+  saveDb(data);
+
+  appendImportAudit({
+    source: 'openf1',
+    action: 'sync-testing',
+    season,
+    round: null,
+    changedRows: {
+      testingTiming: testingTimingRows.length,
+      meetings: testingMeetings.length,
+      sessions: sessionCount
+    }
+  });
+
+  return {
+    season,
+    reused: false,
+    imported: {
+      testingTiming: testingTimingRows.length,
+      meetings: testingMeetings.length,
+      sessions: sessionCount
+    },
+    meetings: testingMeetings.map((meeting) => ({
+      key: meeting.meeting_key,
+      name: meeting.meeting_name || null,
+      date_start: meeting.date_start || null
+    })),
+    totalRows: testingTimingRows.length
+  };
+}
+
+async function ensureOpenF1TestingData(season) {
+  const data = loadDb();
+  const existingCount = (data.testing_timing || []).filter((row) => row.season === season).length;
+  if (existingCount > 0) {
+    return {
+      enabled: true,
+      reused: true,
+      imported_rows: 0,
+      total_rows: existingCount
+    };
+  }
+
+  const result = await importOpenF1TestingSeason({ season, force: false });
+  return {
+    enabled: true,
+    reused: Boolean(result.reused),
+    imported_rows: Number(result.imported?.testingTiming || 0),
+    total_rows: Number(result.totalRows || 0),
+    meetings: result.meetings || []
   };
 }
 
@@ -5019,20 +5544,45 @@ app.get('/api/stats', (req, res) => {
   res.json(stats);
 });
 
-app.get('/api/projections', (req, res) => {
-  const season = requireSeason(req.query.season);
-  const round = requireRound(req.query.round);
-  const userRaw = String(req.query.user || '').trim();
-  const user = userRaw || null;
+app.get('/api/projections', async (req, res, next) => {
+  try {
+    const season = requireSeason(req.query.season);
+    const round = requireRound(req.query.round);
+    const userRaw = String(req.query.user || '').trim();
+    const user = userRaw || null;
+    const includeTesting = !['0', 'false', 'off', 'no'].includes(String(req.query.testing || '').trim().toLowerCase());
 
-  if (user) {
-    const known = getConfiguredUsers();
-    if (!known.includes(user)) throw fail('Unknown user for projections', 400);
+    if (user) {
+      const known = getConfiguredUsers();
+      if (!known.includes(user)) throw fail('Unknown user for projections', 400);
+    }
+
+    let testingSync = {
+      enabled: includeTesting,
+      reused: false,
+      imported_rows: 0,
+      total_rows: 0,
+      error: null
+    };
+
+    if (includeTesting) {
+      try {
+        testingSync = {
+          ...testingSync,
+          ...(await ensureOpenF1TestingData(season))
+        };
+      } catch (error) {
+        testingSync.error = error?.message || 'Testing sync failed';
+      }
+    }
+
+    const data = loadDb();
+    const payload = projectRoundOutcomes(data, season, round, user, { includeTesting });
+    payload.testing_sync = testingSync;
+    res.json(payload);
+  } catch (error) {
+    next(error);
   }
-
-  const data = loadDb();
-  const payload = projectRoundOutcomes(data, season, round, user);
-  res.json(payload);
 });
 
 app.post('/api/openf1/sync-round', async (req, res, next) => {
@@ -5040,6 +5590,17 @@ app.post('/api/openf1/sync-round', async (req, res, next) => {
     const season = requireSeason(req.body?.season);
     const round = requireRound(req.body?.round);
     const result = await importOpenF1Round({ season, round });
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/openf1/sync-testing', async (req, res, next) => {
+  try {
+    const season = requireSeason(req.body?.season || req.query?.season || 2026);
+    const force = toBool(req.body?.force ?? req.query?.force);
+    const result = await importOpenF1TestingSeason({ season, force });
     res.json({ ok: true, ...result });
   } catch (error) {
     next(error);
