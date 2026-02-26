@@ -38,6 +38,11 @@ const IS_RAILWAY_RUNTIME = Boolean(
 const IS_PRODUCTION_RUNTIME =
   String(process.env.NODE_ENV || '').trim().toLowerCase() === 'production' ||
   RAILWAY_ENVIRONMENT_NAME.toLowerCase() === 'production';
+const DEPLOY_WALL_ENABLED = process.env.DEPLOY_WALL === undefined
+  ? IS_PRODUCTION_RUNTIME
+  : toBool(process.env.DEPLOY_WALL);
+const DEPLOY_WALL_ALLOW_UNSAFE_DATA_DIR = toBool(process.env.DEPLOY_WALL_ALLOW_UNSAFE_DATA_DIR);
+const DEPLOY_WALL_ALLOW_EMPTY_DB = toBool(process.env.DEPLOY_WALL_ALLOW_EMPTY_DB);
 const ENFORCE_PERSISTENT_DATA_DIR = toBool(process.env.ENFORCE_PERSISTENT_DATA_DIR || process.env.DEPLOY_WALL_ENFORCE_PERSISTENT_DATA_DIR);
 const ALLOW_DEMO_ENDPOINTS = process.env.ALLOW_DEMO_ENDPOINTS === undefined
   ? !IS_PRODUCTION_RUNTIME
@@ -738,6 +743,9 @@ function getStorageSafetyStatus() {
     defaultDataDir: DEFAULT_DATA_DIR,
     usesRecommendedVolumePath,
     likelyEphemeralOnRailway,
+    deployWallEnabled: DEPLOY_WALL_ENABLED,
+    deployWallAllowUnsafeDataDir: DEPLOY_WALL_ALLOW_UNSAFE_DATA_DIR,
+    deployWallAllowEmptyDb: DEPLOY_WALL_ALLOW_EMPTY_DB,
     enforcePersistentDataDir: ENFORCE_PERSISTENT_DATA_DIR,
     allowDemoEndpoints: ALLOW_DEMO_ENDPOINTS,
     recommended: {
@@ -758,11 +766,45 @@ function logStorageSafetyWarningIfNeeded() {
     '[storage] To protect picks, mount a Railway volume at /data and set DATA_DIR=/data.'
   ].join('\n');
 
-  if (ENFORCE_PERSISTENT_DATA_DIR) {
-    throw new Error(`${message}\n[storage] Startup blocked because ENFORCE_PERSISTENT_DATA_DIR=1.`);
+  if ((DEPLOY_WALL_ENABLED && !DEPLOY_WALL_ALLOW_UNSAFE_DATA_DIR) || ENFORCE_PERSISTENT_DATA_DIR) {
+    throw new Error(`${message}\n[storage] Startup blocked by deploy wall (or ENFORCE_PERSISTENT_DATA_DIR=1).`);
   }
 
   console.warn(message);
+}
+
+function assertDeployWallStartup() {
+  if (!DEPLOY_WALL_ENABLED) return;
+  if (!IS_PRODUCTION_RUNTIME) return;
+
+  const storage = getStorageSafetyStatus();
+
+  if (storage.likelyEphemeralOnRailway && !DEPLOY_WALL_ALLOW_UNSAFE_DATA_DIR) {
+    throw new Error(
+      '[deploy-wall] Refusing to start: DATA_DIR appears to be ephemeral on Railway. ' +
+      'Mount a volume at /data and set DATA_DIR=/data. ' +
+      'Temporary override: DEPLOY_WALL_ALLOW_UNSAFE_DATA_DIR=1'
+    );
+  }
+
+  if (!fs.existsSync(DB_PATH) && !DEPLOY_WALL_ALLOW_EMPTY_DB) {
+    throw new Error(
+      '[deploy-wall] Refusing to start: production database file is missing. ' +
+      `Expected ${DB_PATH}. This prevents a silent blank database boot. ` +
+      'Restore the DB or set DEPLOY_WALL_ALLOW_EMPTY_DB=1 for an intentional first-time bootstrap.'
+    );
+  }
+}
+
+function createDeployBootSnapshot() {
+  if (!DEPLOY_WALL_ENABLED || !IS_PRODUCTION_RUNTIME) return null;
+  if (!fs.existsSync(DB_PATH)) return null;
+  try {
+    return createDbSnapshot('deploy-boot');
+  } catch (error) {
+    console.error('[deploy-wall]', 'boot snapshot failed:', error?.message || error);
+    return null;
+  }
 }
 
 function buildStoragePersistenceCheck() {
@@ -6539,6 +6581,8 @@ app.use((err, req, res, next) => {
 });
 
 logStorageSafetyWarningIfNeeded();
+assertDeployWallStartup();
+createDeployBootSnapshot();
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`F1 predictions app running on http://localhost:${PORT}`);

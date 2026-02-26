@@ -19,6 +19,13 @@ const isRailway = Boolean(
 );
 const railwayEnv = String(process.env.RAILWAY_ENVIRONMENT_NAME || '').trim().toLowerCase();
 const isProduction = String(process.env.NODE_ENV || '').trim().toLowerCase() === 'production' || railwayEnv === 'production';
+const deployWallEnabled = process.env.DEPLOY_WALL === undefined
+  ? isProduction
+  : ['1', 'true', 'yes', 'y'].includes(String(process.env.DEPLOY_WALL || '').trim().toLowerCase());
+const deployWallAllowUnsafeDataDir =
+  ['1', 'true', 'yes', 'y'].includes(String(process.env.DEPLOY_WALL_ALLOW_UNSAFE_DATA_DIR || '').trim().toLowerCase());
+const deployWallAllowEmptyDb =
+  ['1', 'true', 'yes', 'y'].includes(String(process.env.DEPLOY_WALL_ALLOW_EMPTY_DB || '').trim().toLowerCase());
 const enforcePersistentDataDir =
   ['1', 'true', 'yes', 'y'].includes(String(process.env.ENFORCE_PERSISTENT_DATA_DIR || process.env.DEPLOY_WALL_ENFORCE_PERSISTENT_DATA_DIR || '').trim().toLowerCase());
 
@@ -50,8 +57,11 @@ if (likelyEphemeralOnRailway) {
     '[preflight] To protect saved picks, mount a Railway volume at /data and set DATA_DIR=/data.'
   ].join('\n');
 
-  if (enforcePersistentDataDir) {
-    throw new Error(`${msg}\n[preflight] Startup blocked because ENFORCE_PERSISTENT_DATA_DIR=1.`);
+  if ((deployWallEnabled && !deployWallAllowUnsafeDataDir) || enforcePersistentDataDir) {
+    throw new Error(
+      `${msg}\n[preflight] Startup blocked by deploy wall (or ENFORCE_PERSISTENT_DATA_DIR=1). ` +
+      'Temporary override: DEPLOY_WALL_ALLOW_UNSAFE_DATA_DIR=1'
+    );
   }
 
   if (isProduction) {
@@ -77,6 +87,13 @@ if (!fs.existsSync(gridPath)) {
 }
 
 if (!fs.existsSync(dbPath)) {
+  if (deployWallEnabled && isProduction && !deployWallAllowEmptyDb) {
+    throw new Error(
+      `[preflight] Refusing to create a new production DB at ${dbPath}. ` +
+      'This prevents a silent blank database boot after a bad deploy or volume issue. ' +
+      'Restore data first, or set DEPLOY_WALL_ALLOW_EMPTY_DB=1 for an intentional first boot.'
+    );
+  }
   const emptyDb = {
     drivers: [],
     races: [],
@@ -88,6 +105,10 @@ if (!fs.existsSync(dbPath)) {
   };
   fs.writeFileSync(dbPath, JSON.stringify(emptyDb, null, 2));
   console.log('[preflight] Created missing data/db.json');
+}
+
+if (deployWallEnabled && isProduction) {
+  console.log(`[preflight] Deploy wall active (DATA_DIR=${dataDir})`);
 }
 
 const major = Number(process.versions.node.split('.')[0]);
