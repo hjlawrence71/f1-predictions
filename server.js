@@ -16,6 +16,14 @@ const MAX_DB_BACKUPS_RAW = Number.parseInt(process.env.MAX_DB_BACKUPS || '60', 1
 const MAX_DB_BACKUPS = Number.isFinite(MAX_DB_BACKUPS_RAW)
   ? Math.max(10, Math.min(500, MAX_DB_BACKUPS_RAW))
   : 60;
+const CHAMP_PROJECTION_CACHE_LIMIT_RAW = Number.parseInt(process.env.CHAMP_PROJECTION_CACHE_LIMIT || '18', 10);
+const CHAMP_PROJECTION_CACHE_LIMIT = Number.isFinite(CHAMP_PROJECTION_CACHE_LIMIT_RAW)
+  ? Math.max(4, Math.min(100, CHAMP_PROJECTION_CACHE_LIMIT_RAW))
+  : 18;
+const CHAMP_GRADE_SNAPSHOT_LIMIT_RAW = Number.parseInt(process.env.CHAMP_GRADE_SNAPSHOT_LIMIT || '200', 10);
+const CHAMP_GRADE_SNAPSHOT_LIMIT = Number.isFinite(CHAMP_GRADE_SNAPSHOT_LIMIT_RAW)
+  ? Math.max(20, Math.min(1000, CHAMP_GRADE_SNAPSHOT_LIMIT_RAW))
+  : 200;
 const SNAPSHOT_FILE_RE = /^db-[a-z0-9T:\-\.]+(?:--[a-z0-9\-]+)?\.json$/i;
 const IMPORT_AUDIT_PATH = path.join(DATA_DIR, 'import_audit.json');
 const MAX_IMPORT_AUDIT_ROWS = 500;
@@ -403,7 +411,9 @@ function seedDemoData(roundCount = 8) {
     race_timing: [],
     race_actuals,
     predictions,
-    season_predictions
+    season_predictions,
+    championship_projection_cache: [],
+    championship_projection_grade_snapshots: []
   };
 
   updateAllPredictionScores(db);
@@ -550,7 +560,9 @@ function loadDb() {
       race_timing: [],
       race_actuals: [],
       predictions: [],
-      season_predictions: []
+      season_predictions: [],
+      championship_projection_cache: [],
+      championship_projection_grade_snapshots: []
     };
   }
   const raw = fs.readFileSync(DB_PATH, 'utf8');
@@ -560,6 +572,8 @@ function loadDb() {
   if (!data.testing_timing) data.testing_timing = [];
   if (!data.race_timing) data.race_timing = [];
   if (!data.season_predictions) data.season_predictions = [];
+  if (!Array.isArray(data.championship_projection_cache)) data.championship_projection_cache = [];
+  if (!Array.isArray(data.championship_projection_grade_snapshots)) data.championship_projection_grade_snapshots = [];
   if (!Array.isArray(data.driver_seasons)) data.driver_seasons = [];
 
   for (const actual of data.race_actuals || []) {
@@ -607,6 +621,7 @@ function loadDb() {
     if (!('bingo' in sp)) sp.bingo = {};
     if (!('curses' in sp)) sp.curses = {};
     if (!('adjudication' in sp)) sp.adjudication = {};
+    if (!('projection_grade' in sp)) sp.projection_grade = null;
   }
   return data;
 }
@@ -3738,7 +3753,13 @@ function buildChampionshipProjection(data, season, fromRound, includeTesting = t
   }
 
   const currentPointsByDriver = new Map();
+  const currentWinsByDriver = new Map();
+  const currentPolesByDriver = new Map();
+  const currentPodiumsByDriver = new Map();
   for (const row of grid) currentPointsByDriver.set(row.driverId, 0);
+  for (const row of grid) currentWinsByDriver.set(row.driverId, 0);
+  for (const row of grid) currentPolesByDriver.set(row.driverId, 0);
+  for (const row of grid) currentPodiumsByDriver.set(row.driverId, 0);
 
   for (const row of data.race_results || []) {
     if (row.season !== season) continue;
@@ -3746,10 +3767,27 @@ function buildChampionshipProjection(data, season, fromRound, includeTesting = t
     if (!row.driverId) continue;
     const points = toFiniteNumber(row.points) || 0;
     currentPointsByDriver.set(row.driverId, (currentPointsByDriver.get(row.driverId) || 0) + points);
+    if (toInt(row.position) === 1) {
+      currentWinsByDriver.set(row.driverId, (currentWinsByDriver.get(row.driverId) || 0) + 1);
+    }
+    if ((toInt(row.position) || 999) <= 3) {
+      currentPodiumsByDriver.set(row.driverId, (currentPodiumsByDriver.get(row.driverId) || 0) + 1);
+    }
+  }
+
+  for (const row of data.qualifying_results || []) {
+    if (row.season !== season) continue;
+    if (toInt(row.round) === null || row.round >= fromRound) continue;
+    if (!row.driverId) continue;
+    if (toInt(row.position) === 1) {
+      currentPolesByDriver.set(row.driverId, (currentPolesByDriver.get(row.driverId) || 0) + 1);
+    }
   }
 
   const futurePointsByDriver = new Map([...currentPointsByDriver.keys()].map((driverId) => [driverId, 0]));
   const projectedWinsByDriver = new Map([...currentPointsByDriver.keys()].map((driverId) => [driverId, 0]));
+  const projectedPolesByDriver = new Map([...currentPointsByDriver.keys()].map((driverId) => [driverId, 0]));
+  const projectedPodiumsByDriver = new Map([...currentPointsByDriver.keys()].map((driverId) => [driverId, 0]));
   const usedRounds = [];
 
   for (const race of remainingRounds) {
@@ -3768,6 +3806,11 @@ function buildChampionshipProjection(data, season, fromRound, includeTesting = t
     for (const row of table.raceRows || []) {
       futurePointsByDriver.set(row.driverId, (futurePointsByDriver.get(row.driverId) || 0) + (toFiniteNumber(row.expected_points) || 0));
       projectedWinsByDriver.set(row.driverId, (projectedWinsByDriver.get(row.driverId) || 0) + (toFiniteNumber(row.probabilities?.win) || 0));
+      projectedPodiumsByDriver.set(row.driverId, (projectedPodiumsByDriver.get(row.driverId) || 0) + (toFiniteNumber(row.probabilities?.podium) || 0));
+    }
+
+    for (const row of table.qualifyingRows || []) {
+      projectedPolesByDriver.set(row.driverId, (projectedPolesByDriver.get(row.driverId) || 0) + (toFiniteNumber(row.pole_probability) || 0));
     }
   }
 
@@ -3775,6 +3818,12 @@ function buildChampionshipProjection(data, season, fromRound, includeTesting = t
     const meta = driverMetaById.get(driverId) || { driverId, driverName: driverId, team: teamByDriverId.get(driverId) || 'Unknown' };
     const current = toFiniteNumber(currentPointsByDriver.get(driverId)) || 0;
     const future = toFiniteNumber(futurePointsByDriver.get(driverId)) || 0;
+    const currentWins = toFiniteNumber(currentWinsByDriver.get(driverId)) || 0;
+    const projectedWinsRemaining = toFiniteNumber(projectedWinsByDriver.get(driverId)) || 0;
+    const currentPoles = toFiniteNumber(currentPolesByDriver.get(driverId)) || 0;
+    const projectedPolesRemaining = toFiniteNumber(projectedPolesByDriver.get(driverId)) || 0;
+    const currentPodiums = toFiniteNumber(currentPodiumsByDriver.get(driverId)) || 0;
+    const projectedPodiumsRemaining = toFiniteNumber(projectedPodiumsByDriver.get(driverId)) || 0;
     const projectedTotal = current + future;
     return {
       driverId,
@@ -3783,11 +3832,20 @@ function buildChampionshipProjection(data, season, fromRound, includeTesting = t
       current_points: roundTo(current, 2),
       projected_points_remaining: roundTo(future, 2),
       projected_total_points: roundTo(projectedTotal, 2),
-      projected_wins: roundTo(toFiniteNumber(projectedWinsByDriver.get(driverId)) || 0, 2)
+      current_wins: roundTo(currentWins, 2),
+      projected_wins_remaining: roundTo(projectedWinsRemaining, 2),
+      projected_wins: roundTo(projectedWinsRemaining, 2),
+      projected_total_wins: roundTo(currentWins + projectedWinsRemaining, 2),
+      current_poles: roundTo(currentPoles, 2),
+      projected_poles_remaining: roundTo(projectedPolesRemaining, 2),
+      projected_total_poles: roundTo(currentPoles + projectedPolesRemaining, 2),
+      current_podiums: roundTo(currentPodiums, 2),
+      projected_podiums_remaining: roundTo(projectedPodiumsRemaining, 2),
+      projected_total_podiums: roundTo(currentPodiums + projectedPodiumsRemaining, 2)
     };
   }).sort((a, b) =>
     (b.projected_total_points - a.projected_total_points) ||
-    (b.projected_wins - a.projected_wins) ||
+    (b.projected_total_wins - a.projected_total_wins) ||
     a.driverName.localeCompare(b.driverName)
   );
 
@@ -3797,15 +3855,34 @@ function buildChampionshipProjection(data, season, fromRound, includeTesting = t
     row.gap_to_leader = roundTo(leaderDriverTotal - row.projected_total_points, 2);
   });
 
+  const driverTitleTempPoints = Math.max(16, 8 + (remainingRounds.length * 4.25));
+  const maxDriverTotal = driverRows.length ? Math.max(...driverRows.map((row) => toFiniteNumber(row.projected_total_points) || 0)) : 0;
+  let driverOddsDen = 0;
+  const driverOddsWeights = driverRows.map((row) => {
+    const projectedTotal = toFiniteNumber(row.projected_total_points) || 0;
+    const weight = Math.exp((projectedTotal - maxDriverTotal) / driverTitleTempPoints);
+    driverOddsDen += weight;
+    return weight;
+  });
+  driverRows.forEach((row, index) => {
+    row.champion_probability = driverOddsDen > 0 ? roundTo(driverOddsWeights[index] / driverOddsDen, 4) : 0;
+    row.podium_any_remaining_probability = roundTo(1 - Math.exp(-Math.max(0, toFiniteNumber(row.projected_podiums_remaining) || 0)), 4);
+    row.win_any_remaining_probability = roundTo(1 - Math.exp(-Math.max(0, toFiniteNumber(row.projected_wins_remaining) || 0)), 4);
+  });
+
   const constructorCurrent = new Map();
   const constructorFuture = new Map();
   const constructorWins = new Map();
+  const constructorPoles = new Map();
+  const constructorPodiums = new Map();
 
   for (const row of driverRows) {
     const team = displayTeamName(row.team);
     constructorCurrent.set(team, (constructorCurrent.get(team) || 0) + (toFiniteNumber(row.current_points) || 0));
     constructorFuture.set(team, (constructorFuture.get(team) || 0) + (toFiniteNumber(row.projected_points_remaining) || 0));
-    constructorWins.set(team, (constructorWins.get(team) || 0) + (toFiniteNumber(row.projected_wins) || 0));
+    constructorWins.set(team, (constructorWins.get(team) || 0) + (toFiniteNumber(row.projected_total_wins) || 0));
+    constructorPoles.set(team, (constructorPoles.get(team) || 0) + (toFiniteNumber(row.projected_total_poles) || 0));
+    constructorPodiums.set(team, (constructorPodiums.get(team) || 0) + (toFiniteNumber(row.projected_total_podiums) || 0));
   }
 
   const constructorRows = [...constructorCurrent.keys()].map((team) => {
@@ -3817,7 +3894,9 @@ function buildChampionshipProjection(data, season, fromRound, includeTesting = t
       current_points: roundTo(current, 2),
       projected_points_remaining: roundTo(future, 2),
       projected_total_points: roundTo(projectedTotal, 2),
-      projected_wins: roundTo(constructorWins.get(team) || 0, 2)
+      projected_wins: roundTo(constructorWins.get(team) || 0, 2),
+      projected_poles: roundTo(constructorPoles.get(team) || 0, 2),
+      projected_podiums: roundTo(constructorPodiums.get(team) || 0, 2)
     };
   }).sort((a, b) =>
     (b.projected_total_points - a.projected_total_points) ||
@@ -3831,6 +3910,33 @@ function buildChampionshipProjection(data, season, fromRound, includeTesting = t
     row.gap_to_leader = roundTo(leaderConstructorTotal - row.projected_total_points, 2);
   });
 
+  const constructorTitleTempPoints = Math.max(22, 12 + (remainingRounds.length * 5.75));
+  const maxConstructorTotal = constructorRows.length ? Math.max(...constructorRows.map((row) => toFiniteNumber(row.projected_total_points) || 0)) : 0;
+  let constructorOddsDen = 0;
+  const constructorOddsWeights = constructorRows.map((row) => {
+    const projectedTotal = toFiniteNumber(row.projected_total_points) || 0;
+    const weight = Math.exp((projectedTotal - maxConstructorTotal) / constructorTitleTempPoints);
+    constructorOddsDen += weight;
+    return weight;
+  });
+  constructorRows.forEach((row, index) => {
+    row.champion_probability = constructorOddsDen > 0 ? roundTo(constructorOddsWeights[index] / constructorOddsDen, 4) : 0;
+  });
+
+  const currentUniqueWinners = driverRows.filter((row) => (toFiniteNumber(row.current_wins) || 0) > 0).length;
+  const expectedUniqueWinners = driverRows.reduce((sum, row) => {
+    const hasWin = (toFiniteNumber(row.current_wins) || 0) > 0;
+    if (hasWin) return sum + 1;
+    const lambda = Math.max(0, toFiniteNumber(row.projected_wins_remaining) || 0);
+    return sum + (1 - Math.exp(-lambda));
+  }, 0);
+  const projectedDriverMargin = driverRows.length >= 2
+    ? roundTo((toFiniteNumber(driverRows[0].projected_total_points) || 0) - (toFiniteNumber(driverRows[1].projected_total_points) || 0), 2)
+    : null;
+  const projectedConstructorMargin = constructorRows.length >= 2
+    ? roundTo((toFiniteNumber(constructorRows[0].projected_total_points) || 0) - (toFiniteNumber(constructorRows[1].projected_total_points) || 0), 2)
+    : null;
+
   return {
     season,
     from_round: fromRound,
@@ -3840,9 +3946,783 @@ function buildChampionshipProjection(data, season, fromRound, includeTesting = t
     simulation_runs_per_round: simulationRuns,
     include_testing_signal: includeTesting,
     method: 'Current points through previous round + expected points from projected remaining rounds.',
+    odds_method: 'Softmax over projected championship totals with rounds-remaining uncertainty temperature.',
     rounds_used: usedRounds,
+    projected_driver_title_margin: projectedDriverMargin,
+    projected_constructor_title_margin: projectedConstructorMargin,
+    derived_signals: {
+      expected_unique_winners: roundTo(expectedUniqueWinners, 2),
+      current_unique_winners: currentUniqueWinners
+    },
     driver_table: driverRows,
     constructor_table: constructorRows
+  };
+}
+
+function championshipProjectionCacheKey({ season, round, includeTesting = true, modelVersion = PROJECTION_MODEL_SPEC.version }) {
+  return [
+    'champ',
+    `s${season}`,
+    `r${round}`,
+    `m${String(modelVersion || 'unknown').replace(/[^a-z0-9.\-_]+/gi, '_')}`,
+    includeTesting ? 'test1' : 'test0'
+  ].join(':');
+}
+
+function pruneChampionshipProjectionCaches(data) {
+  if (!Array.isArray(data.championship_projection_cache)) data.championship_projection_cache = [];
+  data.championship_projection_cache = data.championship_projection_cache
+    .filter((row) => row && row.cacheKey && row.projection)
+    .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
+    .slice(0, CHAMP_PROJECTION_CACHE_LIMIT);
+}
+
+function pruneChampionshipGradeSnapshots(data) {
+  if (!Array.isArray(data.championship_projection_grade_snapshots)) data.championship_projection_grade_snapshots = [];
+  data.championship_projection_grade_snapshots = data.championship_projection_grade_snapshots
+    .filter((row) => row && row.user && row.season)
+    .sort((a, b) => String(b.timestamp || '').localeCompare(String(a.timestamp || '')))
+    .slice(0, CHAMP_GRADE_SNAPSHOT_LIMIT);
+}
+
+function getOrBuildChampionshipProjectionCached(data, season, round, includeTesting = true) {
+  if (!Array.isArray(data.championship_projection_cache)) data.championship_projection_cache = [];
+
+  const modelVersion = PROJECTION_MODEL_SPEC.version || 'unknown';
+  const cacheKey = championshipProjectionCacheKey({ season, round, includeTesting, modelVersion });
+  const existing = data.championship_projection_cache.find((row) => row.cacheKey === cacheKey && row.projection);
+
+  if (existing) {
+    existing.last_used_at = new Date().toISOString();
+    return {
+      projection: existing.projection,
+      cacheKey,
+      modelVersion,
+      cacheHit: true
+    };
+  }
+
+  const projection = buildChampionshipProjection(data, season, round, includeTesting);
+  const now = new Date().toISOString();
+  data.championship_projection_cache.push({
+    cacheKey,
+    season,
+    round,
+    includeTesting: Boolean(includeTesting),
+    modelVersion,
+    created_at: now,
+    last_used_at: now,
+    projection
+  });
+  pruneChampionshipProjectionCaches(data);
+
+  return {
+    projection,
+    cacheKey,
+    modelVersion,
+    cacheHit: false
+  };
+}
+
+function resolveChampionshipProjectionRound(data, season, now = new Date()) {
+  const schedule = getSeasonSchedule(season, data).slice().sort((a, b) => a.round - b.round);
+  if (!schedule.length) {
+    return {
+      season,
+      round: 1,
+      throughRound: 0,
+      reason: 'no_schedule',
+      today: dateYmdInTimeZone(now, PICKS_LOCK_TIME_ZONE),
+      scheduleLength: 0
+    };
+  }
+
+  const maxCompletedRound = Math.max(
+    0,
+    ...(data.race_actuals || [])
+      .filter((row) => row.season === season)
+      .map((row) => toInt(row.round) || 0),
+    ...(data.race_results || [])
+      .filter((row) => row.season === season)
+      .map((row) => toInt(row.round) || 0)
+  );
+
+  const lastScheduledRound = schedule[schedule.length - 1].round;
+  const today = dateYmdInTimeZone(now, PICKS_LOCK_TIME_ZONE);
+
+  if (maxCompletedRound > 0) {
+    const nextRound = Math.min(lastScheduledRound + 1, maxCompletedRound + 1);
+    return {
+      season,
+      round: nextRound,
+      throughRound: Math.min(maxCompletedRound, lastScheduledRound),
+      reason: 'after_completed_round',
+      today,
+      scheduleLength: schedule.length
+    };
+  }
+
+  const activeOrNext = schedule.find((row) => {
+    const endDate = row.end_date || row.start_date;
+    return endDate && String(endDate) >= today;
+  }) || schedule[0];
+
+  return {
+    season,
+    round: activeOrNext?.round || 1,
+    throughRound: 0,
+    reason: 'date_window',
+    today,
+    scheduleLength: schedule.length
+  };
+}
+
+function estimatePlacementHitProbabilities({ predictedRank, projectedRank, confidence = 0.5, roundsRemaining = 0, mode = 'wdc' }) {
+  const delta = Math.abs((toInt(predictedRank) || 0) - (toInt(projectedRank) || 0));
+  const baseSigma = mode === 'wcc' ? 1.1 : 1.35;
+  const sigma = Math.max(0.85, baseSigma + (roundsRemaining * (mode === 'wcc' ? 0.08 : 0.11)) + ((1 - clamp(confidence, 0, 1)) * 1.8));
+  const exact = clamp(Math.exp(-0.5 * Math.pow(delta / sigma, 2)));
+  const within1Inclusive = clamp(Math.exp(-0.5 * Math.pow(Math.max(0, delta - 1) / (sigma * 1.1), 2)));
+  const within3Inclusive = clamp(Math.exp(-0.5 * Math.pow(Math.max(0, delta - 3) / (sigma * 1.2), 2)));
+
+  const within1 = clamp(within1Inclusive - exact);
+  const within3 = clamp(within3Inclusive - exact - within1);
+
+  return { exact, within1, within3, delta, sigma };
+}
+
+function softmaxProbabilitiesByValue(rows, valueKey, { transform = (v) => v, temp = 1 } = {}) {
+  const items = (rows || []).map((row) => {
+    const value = toFiniteNumber(transform(row?.[valueKey] ?? row)) || 0;
+    return { row, value };
+  });
+  if (!items.length) return [];
+  const temperature = Math.max(0.15, toFiniteNumber(temp) || 1);
+  const maxValue = Math.max(...items.map((item) => item.value));
+  let den = 0;
+  const weights = items.map((item) => {
+    const weight = Math.exp((item.value - maxValue) / temperature);
+    den += weight;
+    return weight;
+  });
+  return items.map((item, idx) => ({
+    row: item.row,
+    value: item.value,
+    probability: den > 0 ? clamp(weights[idx] / den) : 0
+  }));
+}
+
+function gradeLetterFromPercent(percent) {
+  const p = clamp(toFiniteNumber(percent) || 0, 0, 1);
+  if (p >= 0.92) return 'A+';
+  if (p >= 0.87) return 'A';
+  if (p >= 0.82) return 'A-';
+  if (p >= 0.76) return 'B+';
+  if (p >= 0.70) return 'B';
+  if (p >= 0.64) return 'B-';
+  if (p >= 0.58) return 'C+';
+  if (p >= 0.50) return 'C';
+  if (p >= 0.42) return 'C-';
+  if (p >= 0.34) return 'D';
+  return 'F';
+}
+
+function championshipRiskLevel(score) {
+  const n = clamp((toFiniteNumber(score) || 0) / 100, 0, 1);
+  if (n < 0.34) return 'Low';
+  if (n < 0.67) return 'Medium';
+  return 'High';
+}
+
+function humanizeChampionshipGradeValue(field, value, driverNames, teamNames) {
+  if (value === null || value === undefined || value === '') return '—';
+  if (/^(wdc_order|driver_champion_id|out_of_box\.)/.test(field) || /curses\./.test(field)) {
+    return driverNames.get(value) || String(value);
+  }
+  if (/^(wcc_order|constructor_champion|wcc_bonus\.|big_brain\.|chaos\.upgrade)/.test(field)) {
+    return teamNames.get(displayTeamName(value)) || displayTeamName(value);
+  }
+  return String(value);
+}
+
+function pushChampionshipGradeRow(state, row) {
+  state.breakdown.push(row);
+
+  const hasPick = row.hasPick !== false;
+  if (!hasPick) return;
+
+  if (row.includeInCoverage !== false) {
+    state.coverage.filledFields += 1;
+    state.coverage.totalPointsWeight += Math.max(0, toFiniteNumber(row.maxPoints) || 0);
+  }
+
+  if (row.modeled) {
+    state.coverage.modeledFields += 1;
+    state.coverage.modeledPointsWeight += Math.max(0, toFiniteNumber(row.maxPoints) || 0);
+    state.expectedPoints += toFiniteNumber(row.expectedPoints) || 0;
+    state.maxModeledPoints += Math.max(0, toFiniteNumber(row.maxPoints) || 0);
+  }
+}
+
+function buildChampionshipProjectionGradeSnapshot(data, row, projection, context = {}) {
+  const season = row?.season;
+  const grid = resolveGridDrivers(data, season);
+  const driverNames = new Map(grid.map((d) => [d.driverId, d.driverName]));
+  for (const d of data.drivers || []) if (d?.driverId && d?.driverName) driverNames.set(d.driverId, d.driverName);
+  const teamNames = new Map();
+  for (const g of grid) teamNames.set(displayTeamName(g.team), displayTeamName(g.team));
+  for (const c of projection?.constructor_table || []) teamNames.set(displayTeamName(c.team), displayTeamName(c.team));
+
+  const driverTable = Array.isArray(projection?.driver_table) ? projection.driver_table : [];
+  const constructorTable = Array.isArray(projection?.constructor_table) ? projection.constructor_table : [];
+  const driverById = new Map(driverTable.map((d) => [d.driverId, d]));
+  const driverRankById = new Map(driverTable.map((d) => [d.driverId, toInt(d.rank) || null]));
+  const constructorByTeam = new Map(constructorTable.map((t) => [displayTeamName(t.team), t]));
+  const constructorRankByTeam = new Map(constructorTable.map((t) => [displayTeamName(t.team), toInt(t.rank) || null]));
+
+  const driverConfById = new Map();
+  const constructorConfByTeam = new Map();
+  for (let i = 0; i < driverTable.length; i += 1) {
+    const current = driverTable[i];
+    const prevGap = i > 0 ? Math.abs((toFiniteNumber(driverTable[i - 1].projected_total_points) || 0) - (toFiniteNumber(current.projected_total_points) || 0)) : null;
+    const nextGap = i < driverTable.length - 1 ? Math.abs((toFiniteNumber(current.projected_total_points) || 0) - (toFiniteNumber(driverTable[i + 1].projected_total_points) || 0)) : null;
+    const localGap = [prevGap, nextGap].filter((v) => v !== null);
+    const gap = localGap.length ? Math.min(...localGap) : 20;
+    driverConfById.set(current.driverId, clamp(0.35 + (gap / 40), 0.35, 0.97));
+  }
+  for (let i = 0; i < constructorTable.length; i += 1) {
+    const current = constructorTable[i];
+    const prevGap = i > 0 ? Math.abs((toFiniteNumber(constructorTable[i - 1].projected_total_points) || 0) - (toFiniteNumber(current.projected_total_points) || 0)) : null;
+    const nextGap = i < constructorTable.length - 1 ? Math.abs((toFiniteNumber(current.projected_total_points) || 0) - (toFiniteNumber(constructorTable[i + 1].projected_total_points) || 0)) : null;
+    const localGap = [prevGap, nextGap].filter((v) => v !== null);
+    const gap = localGap.length ? Math.min(...localGap) : 28;
+    constructorConfByTeam.set(displayTeamName(current.team), clamp(0.4 + (gap / 65), 0.4, 0.985));
+  }
+
+  const state = {
+    breakdown: [],
+    expectedPoints: 0,
+    maxModeledPoints: 0,
+    coverage: {
+      filledFields: 0,
+      modeledFields: 0,
+      totalPointsWeight: 0,
+      modeledPointsWeight: 0
+    }
+  };
+
+  const roundsRemaining = toInt(projection?.rounds_remaining) || 0;
+  let wdcExpected = 0;
+  let wdcMax = 0;
+  let wccExpected = 0;
+  let wccMax = 0;
+  const riskSignals = [];
+
+  const wdcOrder = Array.isArray(row?.wdc_order) ? row.wdc_order : [];
+  for (let idx = 0; idx < wdcOrder.length; idx += 1) {
+    const driverId = wdcOrder[idx];
+    if (!driverId) continue;
+    const predictedRank = idx + 1;
+    const projectedRank = driverRankById.get(driverId);
+    const confidence = driverConfById.get(driverId) || 0.45;
+    const probs = projectedRank
+      ? estimatePlacementHitProbabilities({ predictedRank, projectedRank, confidence, roundsRemaining, mode: 'wdc' })
+      : { exact: 0, within1: 0, within3: 0, delta: null, sigma: null };
+    const expectedPoints =
+      (SEASON_STANDINGS_SCORING.wdcExact * probs.exact) +
+      (SEASON_STANDINGS_SCORING.wdcWithin1 * probs.within1) +
+      (SEASON_STANDINGS_SCORING.wdcWithin3 * probs.within3);
+    const maxPoints = SEASON_STANDINGS_SCORING.wdcExact;
+
+    wdcExpected += expectedPoints;
+    wdcMax += maxPoints;
+    riskSignals.push(clamp((probs.delta || 0) / 6));
+
+    pushChampionshipGradeRow(state, {
+      id: `wdc_order.${predictedRank}`,
+      label: `WDC P${predictedRank}`,
+      group: 'WDC',
+      kind: 'wdc_position',
+      modeled: true,
+      manual: false,
+      maxPoints,
+      expectedPoints: roundTo(expectedPoints, 2),
+      hitProbability: roundTo(probs.exact, 4),
+      confidence: roundTo(confidence, 4),
+      projectedRank: projectedRank || null,
+      projectedValue: projectedRank || null,
+      pickValue: driverId,
+      pickLabel: humanizeChampionshipGradeValue('wdc_order', driverId, driverNames, teamNames),
+      notes: projectedRank ? null : 'Driver not found in current season projection.'
+    });
+  }
+
+  const wccOrder = Array.isArray(row?.wcc_order) ? row.wcc_order : [];
+  for (let idx = 0; idx < wccOrder.length; idx += 1) {
+    const teamRaw = wccOrder[idx];
+    if (!teamRaw) continue;
+    const team = displayTeamName(teamRaw);
+    const predictedRank = idx + 1;
+    const projectedRank = constructorRankByTeam.get(team);
+    const confidence = constructorConfByTeam.get(team) || 0.5;
+    const probs = projectedRank
+      ? estimatePlacementHitProbabilities({ predictedRank, projectedRank, confidence, roundsRemaining, mode: 'wcc' })
+      : { exact: 0, delta: null };
+    const expectedPoints = SEASON_STANDINGS_SCORING.wccExact * (probs.exact || 0);
+    const maxPoints = SEASON_STANDINGS_SCORING.wccExact;
+
+    wccExpected += expectedPoints;
+    wccMax += maxPoints;
+    riskSignals.push(clamp((probs.delta || 0) / 4));
+
+    pushChampionshipGradeRow(state, {
+      id: `wcc_order.${predictedRank}`,
+      label: `WCC P${predictedRank}`,
+      group: 'WCC',
+      kind: 'wcc_position',
+      modeled: true,
+      manual: false,
+      maxPoints,
+      expectedPoints: roundTo(expectedPoints, 2),
+      hitProbability: roundTo(probs.exact || 0, 4),
+      confidence: roundTo(confidence, 4),
+      projectedRank: projectedRank || null,
+      projectedValue: projectedRank || null,
+      pickValue: team,
+      pickLabel: humanizeChampionshipGradeValue('wcc_order', team, driverNames, teamNames),
+      notes: projectedRank ? null : 'Team not found in current season projection.'
+    });
+  }
+
+  const driverChampPick = row?.driver_champion_id || null;
+  const constructorChampPick = row?.constructor_champion ? displayTeamName(row.constructor_champion) : null;
+  const driverChampProb = driverChampPick ? clamp(toFiniteNumber(driverById.get(driverChampPick)?.champion_probability) || 0) : null;
+  const constructorChampProb = constructorChampPick ? clamp(toFiniteNumber(constructorByTeam.get(constructorChampPick)?.champion_probability) || 0) : null;
+
+  if (driverChampPick) {
+    riskSignals.push(1 - (driverChampProb || 0));
+    pushChampionshipGradeRow(state, {
+      id: 'driver_champion_id',
+      label: 'Driver Champion',
+      group: 'Title Calls',
+      kind: 'driver_title_call',
+      modeled: true,
+      manual: false,
+      maxPoints: 0,
+      expectedPoints: 0,
+      includeInCoverage: false,
+      hitProbability: roundTo(driverChampProb || 0, 4),
+      confidence: roundTo(driverChampProb || 0, 4),
+      pickValue: driverChampPick,
+      pickLabel: humanizeChampionshipGradeValue('driver_champion_id', driverChampPick, driverNames, teamNames),
+      projectedValue: driverTable[0]?.driverName || null
+    });
+  }
+
+  if (constructorChampPick) {
+    riskSignals.push(1 - (constructorChampProb || 0));
+    pushChampionshipGradeRow(state, {
+      id: 'constructor_champion',
+      label: 'Constructor Champion',
+      group: 'Title Calls',
+      kind: 'constructor_title_call',
+      modeled: true,
+      manual: false,
+      maxPoints: 0,
+      expectedPoints: 0,
+      includeInCoverage: false,
+      hitProbability: roundTo(constructorChampProb || 0, 4),
+      confidence: roundTo(constructorChampProb || 0, 4),
+      pickValue: constructorChampPick,
+      pickLabel: humanizeChampionshipGradeValue('constructor_champion', constructorChampPick, driverNames, teamNames),
+      projectedValue: constructorTable[0]?.team || null
+    });
+  }
+
+  const projectedTopDriver = driverTable[0] || null;
+  const projectedTopTeam = constructorTable[0] || null;
+  const projectedWdcMargin = Math.max(0, toFiniteNumber(projection?.projected_driver_title_margin) || 0);
+  const projectedWccMargin = Math.max(0, toFiniteNumber(projection?.projected_constructor_title_margin) || 0);
+  const projectedUniqueWinners = Math.max(0, toFiniteNumber(projection?.derived_signals?.expected_unique_winners) || 0);
+
+  const numericGaussianProb = (pickRaw, projectedValue, sigma) => {
+    const pick = toFiniteNumber(pickRaw);
+    const projected = toFiniteNumber(projectedValue);
+    if (pick === null || projected === null) return null;
+    const s = Math.max(0.75, toFiniteNumber(sigma) || 1);
+    const z = (pick - projected) / s;
+    return clamp(Math.exp(-0.5 * z * z));
+  };
+
+  const closestNotOverProb = (pickRaw, projectedValue, sigma) => {
+    const pick = toFiniteNumber(pickRaw);
+    const projected = toFiniteNumber(projectedValue);
+    if (pick === null || projected === null) return null;
+    const s = Math.max(1, toFiniteNumber(sigma) || 1);
+    if (pick <= projected) return clamp(Math.exp(-Math.max(0, projected - pick) / s));
+    return clamp(0.15 * Math.exp(-Math.max(0, pick - projected) / (s * 1.25)));
+  };
+
+  const addModeledScoringField = ({ field, group, pickValue, projectedValue, probability, maxPoints, note = null }) => {
+    if (pickValue === null || pickValue === undefined || String(pickValue).trim() === '') return;
+    const hitProb = clamp(toFiniteNumber(probability) || 0);
+    const expectedPoints = (toFiniteNumber(maxPoints) || 0) * hitProb;
+    riskSignals.push(1 - hitProb);
+    pushChampionshipGradeRow(state, {
+      id: field,
+      label: SEASON_NON_STANDING_FIELD_LABELS[field] || field,
+      group,
+      kind: 'season_field_modeled',
+      modeled: true,
+      manual: false,
+      maxPoints: Number(maxPoints || 0),
+      expectedPoints: roundTo(expectedPoints, 2),
+      hitProbability: roundTo(hitProb, 4),
+      confidence: roundTo(hitProb, 4),
+      pickValue,
+      pickLabel: humanizeChampionshipGradeValue(field, pickValue, driverNames, teamNames),
+      projectedValue,
+      notes: note || null
+    });
+  };
+
+  if (projectedTopDriver) {
+    addModeledScoringField({
+      field: 'wdc_bonus.wins',
+      group: 'WDC bonus',
+      pickValue: row?.wdc_bonus?.wins,
+      projectedValue: roundTo(projectedTopDriver.projected_total_wins, 1),
+      probability: numericGaussianProb(row?.wdc_bonus?.wins, projectedTopDriver.projected_total_wins, 1 + (roundsRemaining * 0.35)),
+      maxPoints: SEASON_NON_STANDING_FIELD_POINTS['wdc_bonus.wins'],
+      note: `Modeled from projected champion wins (${projectedTopDriver.driverName}).`
+    });
+
+    addModeledScoringField({
+      field: 'wdc_bonus.poles',
+      group: 'WDC bonus',
+      pickValue: row?.wdc_bonus?.poles,
+      projectedValue: roundTo(projectedTopDriver.projected_total_poles, 1),
+      probability: numericGaussianProb(row?.wdc_bonus?.poles, projectedTopDriver.projected_total_poles, 1 + (roundsRemaining * 0.3)),
+      maxPoints: SEASON_NON_STANDING_FIELD_POINTS['wdc_bonus.poles'],
+      note: `Modeled from projected champion poles (${projectedTopDriver.driverName}).`
+    });
+
+    addModeledScoringField({
+      field: 'wdc_bonus.margin',
+      group: 'WDC bonus',
+      pickValue: row?.wdc_bonus?.margin,
+      projectedValue: roundTo(projectedWdcMargin, 1),
+      probability: closestNotOverProb(row?.wdc_bonus?.margin, projectedWdcMargin, 4 + (roundsRemaining * 0.9)),
+      maxPoints: SEASON_NON_STANDING_FIELD_POINTS['wdc_bonus.margin'],
+      note: 'Closest-without-going-over proxy using projected WDC margin.'
+    });
+  }
+
+  if (projectedTopTeam) {
+    addModeledScoringField({
+      field: 'wcc_bonus.margin',
+      group: 'WCC bonus',
+      pickValue: row?.wcc_bonus?.margin,
+      projectedValue: roundTo(projectedWccMargin, 1),
+      probability: numericGaussianProb(row?.wcc_bonus?.margin, projectedWccMargin, 10 + (roundsRemaining * 1.4)),
+      maxPoints: SEASON_NON_STANDING_FIELD_POINTS['wcc_bonus.margin'],
+      note: 'Modeled from projected WCC winning margin.'
+    });
+  }
+
+  addModeledScoringField({
+    field: 'bingo.winners',
+    group: 'Results Bingo',
+    pickValue: row?.bingo?.winners,
+    projectedValue: roundTo(projectedUniqueWinners, 1),
+    probability: numericGaussianProb(row?.bingo?.winners, projectedUniqueWinners, 1.25 + (roundsRemaining * 0.18)),
+    maxPoints: SEASON_NON_STANDING_FIELD_POINTS['bingo.winners'],
+    note: 'Expected unique winners proxy from projected season win distribution.'
+  });
+
+  const prevSeason = season ? season - 1 : null;
+  const prevStandings = prevSeason ? getSeasonStandings(data, prevSeason) : null;
+  const prevDriverPos = new Map((prevStandings?.driverStandings || []).map((entry, idx) => [entry.driverId, idx + 1]));
+  const prevTeamPos = new Map((prevStandings?.constructorStandings || []).map((entry, idx) => [displayTeamName(entry.team), idx + 1]));
+
+  const overRows = constructorTable
+    .map((entry) => {
+      const prevPos = prevTeamPos.get(displayTeamName(entry.team));
+      if (!prevPos) return null;
+      const projectedPos = toInt(entry.rank) || null;
+      if (!projectedPos) return null;
+      return {
+        team: displayTeamName(entry.team),
+        delta: prevPos - projectedPos,
+        prevPos,
+        projectedPos
+      };
+    })
+    .filter(Boolean);
+
+  if (overRows.length) {
+    const overProbs = softmaxProbabilitiesByValue(overRows, 'delta', { temp: 0.9 });
+    const overByTeam = new Map(overProbs.map((item) => [displayTeamName(item.row.team), item.probability]));
+    const underProbs = softmaxProbabilitiesByValue(overRows.map((rowItem) => ({ ...rowItem, decline: -rowItem.delta })), 'decline', { temp: 0.9 });
+    const underByTeam = new Map(underProbs.map((item) => [displayTeamName(item.row.team), item.probability]));
+
+    addModeledScoringField({
+      field: 'wcc_bonus.over',
+      group: 'WCC bonus',
+      pickValue: row?.wcc_bonus?.over ? displayTeamName(row.wcc_bonus.over) : '',
+      projectedValue: overProbs[0]?.row?.team || null,
+      probability: row?.wcc_bonus?.over ? overByTeam.get(displayTeamName(row.wcc_bonus.over)) || 0 : null,
+      maxPoints: SEASON_NON_STANDING_FIELD_POINTS['wcc_bonus.over'],
+      note: prevSeason ? `Projected biggest WCC rank improvement vs ${prevSeason}.` : 'Projected biggest WCC rank improvement vs prior season.'
+    });
+
+    addModeledScoringField({
+      field: 'wcc_bonus.under',
+      group: 'WCC bonus',
+      pickValue: row?.wcc_bonus?.under ? displayTeamName(row.wcc_bonus.under) : '',
+      projectedValue: underProbs[0]?.row?.team || null,
+      probability: row?.wcc_bonus?.under ? underByTeam.get(displayTeamName(row.wcc_bonus.under)) || 0 : null,
+      maxPoints: SEASON_NON_STANDING_FIELD_POINTS['wcc_bonus.under'],
+      note: prevSeason ? `Projected biggest WCC rank drop vs ${prevSeason}.` : 'Projected biggest WCC rank drop vs prior season.'
+    });
+  }
+
+  if (row?.out_of_box?.podium) {
+    const driver = driverById.get(row.out_of_box.podium);
+    const hasCurrentPodium = (toFiniteNumber(driver?.current_podiums) || 0) > 0;
+    const probability = hasCurrentPodium ? 1 : clamp(toFiniteNumber(driver?.podium_any_remaining_probability) || 0);
+    addModeledScoringField({
+      field: 'out_of_box.podium',
+      group: 'Out-of-the-box',
+      pickValue: row.out_of_box.podium,
+      projectedValue: driver ? `${driver.driverName} (${roundTo(driver.projected_total_podiums, 1)} podiums proj.)` : null,
+      probability,
+      maxPoints: SEASON_NON_STANDING_FIELD_POINTS['out_of_box.podium'],
+      note: hasCurrentPodium ? 'Driver already has a podium this season.' : 'Probability of at least one podium from projected remaining rounds.'
+    });
+  }
+
+  if (row?.out_of_box?.improved && prevDriverPos.size) {
+    const improvRows = driverTable
+      .map((entry) => {
+        const prevPos = prevDriverPos.get(entry.driverId);
+        const projectedPos = toInt(entry.rank);
+        if (!prevPos || !projectedPos) return null;
+        return {
+          driverId: entry.driverId,
+          driverName: entry.driverName,
+          delta: prevPos - projectedPos,
+          prevPos,
+          projectedPos
+        };
+      })
+      .filter(Boolean);
+
+    if (improvRows.length) {
+      const improvProbs = softmaxProbabilitiesByValue(improvRows, 'delta', { temp: 0.95 });
+      const byDriver = new Map(improvProbs.map((item) => [item.row.driverId, item.probability]));
+      addModeledScoringField({
+        field: 'out_of_box.improved',
+        group: 'Out-of-the-box',
+        pickValue: row.out_of_box.improved,
+        projectedValue: improvProbs[0]?.row?.driverName || null,
+        probability: byDriver.get(row.out_of_box.improved) || 0,
+        maxPoints: SEASON_NON_STANDING_FIELD_POINTS['out_of_box.improved'],
+        note: `Projected largest WDC rank improvement vs ${prevSeason}.`
+      });
+    }
+  }
+
+  const explicitlyModeledIds = new Set(state.breakdown.map((entry) => entry.id));
+  for (const field of SEASON_NON_STANDING_FIELDS) {
+    if (explicitlyModeledIds.has(field)) continue;
+    const pickValue = getNestedValue(row, field);
+    const hasPick = !(pickValue === null || pickValue === undefined || String(pickValue).trim() === '');
+    if (!hasPick) continue;
+
+    pushChampionshipGradeRow(state, {
+      id: field,
+      label: SEASON_NON_STANDING_FIELD_LABELS[field] || field,
+      group: 'Manual adjudication',
+      kind: 'season_field_manual',
+      modeled: false,
+      manual: true,
+      hasPick: true,
+      maxPoints: Number(SEASON_NON_STANDING_FIELD_POINTS[field] || 0),
+      expectedPoints: null,
+      hitProbability: null,
+      confidence: null,
+      pickValue,
+      pickLabel: humanizeChampionshipGradeValue(field, pickValue, driverNames, teamNames),
+      notes: 'Manual / narrative field. Projection model does not grade this yet.'
+    });
+  }
+
+  const gradedRowsForCallouts = state.breakdown
+    .filter((entry) => entry.modeled && ((toFiniteNumber(entry.hitProbability) !== null) || (toFiniteNumber(entry.maxPoints) || 0) > 0))
+    .map((entry) => {
+      const hitProb = toFiniteNumber(entry.hitProbability);
+      const maxPoints = toFiniteNumber(entry.maxPoints) || 0;
+      const expected = toFiniteNumber(entry.expectedPoints) || 0;
+      const score = hitProb !== null
+        ? hitProb
+        : (maxPoints > 0 ? clamp(expected / maxPoints) : 0);
+      return { ...entry, score };
+    });
+
+  const strongestCalls = [...gradedRowsForCallouts]
+    .sort((a, b) => b.score - a.score || String(a.label).localeCompare(String(b.label)))
+    .slice(0, 5)
+    .map((entry) => ({
+      id: entry.id,
+      label: entry.label,
+      pick: entry.pickLabel,
+      hitProbability: roundTo(entry.score, 4),
+      expectedPoints: roundTo(toFiniteNumber(entry.expectedPoints) || 0, 2),
+      maxPoints: toFiniteNumber(entry.maxPoints) || 0
+    }));
+
+  const weakestCalls = [...gradedRowsForCallouts]
+    .sort((a, b) => a.score - b.score || String(a.label).localeCompare(String(b.label)))
+    .slice(0, 5)
+    .map((entry) => ({
+      id: entry.id,
+      label: entry.label,
+      pick: entry.pickLabel,
+      hitProbability: roundTo(entry.score, 4),
+      expectedPoints: roundTo(toFiniteNumber(entry.expectedPoints) || 0, 2),
+      maxPoints: toFiniteNumber(entry.maxPoints) || 0
+    }));
+
+  const modeledGradePercent = state.maxModeledPoints > 0 ? clamp(state.expectedPoints / state.maxModeledPoints, 0, 1) : 0;
+  const titleOddsValues = [driverChampProb, constructorChampProb].filter((v) => toFiniteNumber(v) !== null);
+  const titleCallAccuracyOdds = titleOddsValues.length ? avg(titleOddsValues) : null;
+  const wdcStrength = wdcMax > 0 ? clamp(wdcExpected / wdcMax, 0, 1) : null;
+  const wccStrength = wccMax > 0 ? clamp(wccExpected / wccMax, 0, 1) : null;
+  const gridStrength = (() => {
+    const vals = [wdcStrength, wccStrength].filter((v) => toFiniteNumber(v) !== null);
+    return vals.length ? avg(vals) : null;
+  })();
+
+  const riskScore = riskSignals.length ? roundTo(clamp(avg(riskSignals) || 0, 0, 1) * 100, 1) : 0;
+
+  const coverageFieldPct = state.coverage.filledFields
+    ? clamp(state.coverage.modeledFields / state.coverage.filledFields, 0, 1)
+    : 0;
+  const coveragePointsPct = state.coverage.totalPointsWeight
+    ? clamp(state.coverage.modeledPointsWeight / state.coverage.totalPointsWeight, 0, 1)
+    : 0;
+
+  return {
+    id: `champ-grade-${season}-${row.user}-${Date.now()}`,
+    timestamp: new Date().toISOString(),
+    user: row.user,
+    season,
+    round: toInt(context.round) || toInt(projection?.from_round) || 1,
+    through_round: toInt(projection?.through_round) || 0,
+    rounds_remaining: toInt(projection?.rounds_remaining) || 0,
+    model_version: PROJECTION_MODEL_SPEC.version || 'unknown',
+    cache_key: context.cacheKey || null,
+    include_testing_signal: Boolean(projection?.include_testing_signal),
+    expected_points: roundTo(state.expectedPoints, 2),
+    max_modeled_points: roundTo(state.maxModeledPoints, 2),
+    grade_percent: roundTo(modeledGradePercent, 4),
+    grade: gradeLetterFromPercent(modeledGradePercent),
+    title_call_accuracy_odds: titleCallAccuracyOdds === null ? null : roundTo(titleCallAccuracyOdds, 4),
+    champ_hit_odds: {
+      driver: driverChampProb === null ? null : roundTo(driverChampProb, 4),
+      constructor: constructorChampProb === null ? null : roundTo(constructorChampProb, 4),
+      combined: titleCallAccuracyOdds === null ? null : roundTo(titleCallAccuracyOdds, 4)
+    },
+    grid_order_strength: {
+      wdc: wdcStrength === null ? null : roundTo(wdcStrength, 4),
+      wcc: wccStrength === null ? null : roundTo(wccStrength, 4),
+      combined: gridStrength === null ? null : roundTo(gridStrength, 4)
+    },
+    risk_score: riskScore,
+    risk_level: championshipRiskLevel(riskScore),
+    model_coverage: {
+      fields_modeled: state.coverage.modeledFields,
+      fields_filled: state.coverage.filledFields,
+      field_pct: roundTo(coverageFieldPct, 4),
+      points_modeled: roundTo(state.coverage.modeledPointsWeight, 2),
+      points_filled: roundTo(state.coverage.totalPointsWeight, 2),
+      points_pct: roundTo(coveragePointsPct, 4)
+    },
+    strongest_calls: strongestCalls,
+    weakest_calls: weakestCalls,
+    summary_labels: {
+      grade: 'Projection Grade',
+      expected_points: 'Expected Championship Points',
+      title_call_accuracy_odds: 'Title Call Accuracy Odds',
+      grid_order_strength: 'Grid Order Strength (WDC / WCC)',
+      risk_score: 'Risk Level',
+      model_coverage: 'Model Coverage'
+    },
+    per_field_breakdown: state.breakdown
+  };
+}
+
+function refreshSeasonProjectionGrades(data, season, { force = false } = {}) {
+  if (!data || typeof data !== 'object') return { changed: false, rowsUpdated: 0 };
+  const picksRows = (data.season_predictions || []).filter((entry) => entry.season === season);
+  if (!picksRows.length) return { changed: false, rowsUpdated: 0 };
+
+  const roundContext = resolveChampionshipProjectionRound(data, season);
+  const includeTesting = true;
+  const modelVersion = PROJECTION_MODEL_SPEC.version || 'unknown';
+
+  const staleRows = picksRows.filter((row) => {
+    const existing = row.projection_grade || null;
+    const picksUpdatedAt = parseIsoDate(row.updated_at || row.created_at);
+    const gradeUpdatedAt = parseIsoDate(existing?.timestamp);
+    return (
+      !existing ||
+      force ||
+      existing.model_version !== modelVersion ||
+      toInt(existing.round) !== toInt(roundContext.round) ||
+      Boolean(existing.include_testing_signal) !== includeTesting ||
+      (picksUpdatedAt !== null && (gradeUpdatedAt === null || gradeUpdatedAt < picksUpdatedAt))
+    );
+  });
+
+  if (!staleRows.length) {
+    return {
+      changed: false,
+      rowsUpdated: 0,
+      round: roundContext.round,
+      modelVersion,
+      cacheKey: championshipProjectionCacheKey({ season, round: roundContext.round, includeTesting, modelVersion }),
+      cacheHit: null
+    };
+  }
+
+  const cacheResult = getOrBuildChampionshipProjectionCached(data, season, roundContext.round, includeTesting);
+  const projection = cacheResult.projection;
+
+  let rowsUpdated = 0;
+  let snapshotsAppended = 0;
+
+  for (const row of staleRows) {
+    const snapshot = buildChampionshipProjectionGradeSnapshot(data, row, projection, {
+      ...roundContext,
+      cacheKey: cacheResult.cacheKey
+    });
+    row.projection_grade = snapshot;
+    data.championship_projection_grade_snapshots.push(snapshot);
+    rowsUpdated += 1;
+    snapshotsAppended += 1;
+  }
+
+  if (snapshotsAppended) pruneChampionshipGradeSnapshots(data);
+
+  return {
+    changed: rowsUpdated > 0 || !cacheResult.cacheHit,
+    rowsUpdated,
+    round: roundContext.round,
+    modelVersion,
+    cacheKey: cacheResult.cacheKey,
+    cacheHit: cacheResult.cacheHit
   };
 }
 
@@ -5926,6 +6806,11 @@ app.get('/api/season/standings', (req, res) => {
 app.get('/api/season/picks', (req, res) => {
   const season = requireSeason(req.query.season);
   const data = loadDb();
+  const gradeRefresh = refreshSeasonProjectionGrades(data, season);
+  if (gradeRefresh.changed && gradeRefresh.rowsUpdated > 0) {
+    ensureStorageDirs();
+    writeDbRaw(JSON.stringify(data, null, 2));
+  }
   const picks = data.season_predictions.filter(p => p.season === season);
   res.json(picks);
 });
@@ -6096,9 +6981,22 @@ app.post('/api/season/picks', (req, res) => {
   row.curses = picks.curses || {};
   row.updated_at = now;
 
+  let projectionGrade = null;
+  let projectionGradeError = null;
+  try {
+    const gradeRefresh = refreshSeasonProjectionGrades(data, season);
+    projectionGrade = (data.season_predictions.find((p) => p.user === user && p.season === season) || {}).projection_grade || null;
+    if (gradeRefresh && gradeRefresh.rowsUpdated === 0 && !projectionGrade) {
+      projectionGradeError = 'Projection grade not generated.';
+    }
+  } catch (error) {
+    projectionGradeError = error?.message || String(error);
+    console.error('[champ-grade]', 'save grading failed:', projectionGradeError);
+  }
+
   saveDb(data);
   const postWriteSnapshot = createPostWriteSnapshot(`post-champ-${season}-${user}`);
-  res.json({ ok: true, preWriteSnapshot, postWriteSnapshot });
+  res.json({ ok: true, preWriteSnapshot, postWriteSnapshot, projectionGrade, projectionGradeError });
 });
 
 app.get('/api/season/summary', (req, res) => {

@@ -14,6 +14,7 @@ const wccGrid = document.getElementById('wccGrid');
 const templateEditorDetails = document.getElementById('templateEditorDetails');
 const templateCompareGrid = document.getElementById('templateCompareGrid');
 const templateCompareStatus = document.getElementById('templateCompareStatus');
+const templateProjectionGradePanel = document.getElementById('templateProjectionGradePanel');
 const openRulebookBtn = document.getElementById('openRulebookBtn');
 const openAdjudicationBtn = document.getElementById('openAdjudicationBtn');
 
@@ -28,6 +29,7 @@ let driverNameById = new Map();
 let teamLabelByValue = new Map();
 let wdcBaseOptions = [];
 let wccBaseOptions = [];
+const initialSeasonQuery = Number(new URLSearchParams(window.location.search).get('season') || '');
 
 async function fetchJson(url, options = {}, retries = 2) {
   for (let attempt = 0; attempt <= retries; attempt += 1) {
@@ -241,7 +243,9 @@ async function loadSeasons() {
   seasonSelect.innerHTML = '';
   seasons.forEach((s) => seasonSelect.appendChild(option(String(s), s)));
 
-  if (seasons.includes(2026)) {
+  if (Number.isFinite(initialSeasonQuery) && seasons.includes(initialSeasonQuery)) {
+    seasonSelect.value = String(initialSeasonQuery);
+  } else if (seasons.includes(2026)) {
     seasonSelect.value = '2026';
   } else if (seasons.length) {
     seasonSelect.value = String(Math.max(...seasons.map(Number)));
@@ -515,6 +519,210 @@ function detailLine(label, value, type = 'text') {
   return `<div><span class="eyebrow">${escapeHtml(label)}</span><strong>${escapeHtml(display)}</strong></div>`;
 }
 
+function percentLabel(value, digits = 1) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '—';
+  return `${(n * 100).toFixed(digits)}%`;
+}
+
+function fixedLabel(value, digits = 1) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '—';
+  return n.toFixed(digits);
+}
+
+function gradeChipClass(letter) {
+  const text = String(letter || '').toUpperCase();
+  if (text.startsWith('A')) return 'good';
+  if (text.startsWith('B')) return 'ok';
+  if (text.startsWith('C')) return 'warn';
+  return 'bad';
+}
+
+function calloutsHtml(title, rows) {
+  const items = Array.isArray(rows) ? rows : [];
+  const body = items.length
+    ? items.map((row) => `
+        <li>
+          <span>${escapeHtml(row.label || 'Field')}</span>
+          <strong>${escapeHtml(row.pick || '—')}</strong>
+          <em>${percentLabel(row.hitProbability, 0)}</em>
+        </li>
+      `).join('')
+    : '<li class="muted">No graded calls yet.</li>';
+
+  return `
+    <div class="template-grade-callouts">
+      <span class="eyebrow">${escapeHtml(title)}</span>
+      <ol>${body}</ol>
+    </div>
+  `;
+}
+
+function perFieldBreakdownHtml(grade) {
+  const rows = Array.isArray(grade?.per_field_breakdown) ? grade.per_field_breakdown : [];
+  if (!rows.length) return '<div class="muted">No projection-grade breakdown available yet.</div>';
+
+  const body = rows.map((row) => {
+    const modeled = Boolean(row?.modeled);
+    const expected = modeled ? fixedLabel(row.expectedPoints, 2) : 'Manual';
+    const hit = modeled ? percentLabel(row.hitProbability, 0) : '—';
+    const max = Number.isFinite(Number(row.maxPoints)) ? Number(row.maxPoints) : 0;
+    const kindClass = modeled ? 'modeled' : 'manual';
+
+    return `
+      <tr class="${kindClass}">
+        <td>${escapeHtml(row.label || row.id || 'Field')}</td>
+        <td>${escapeHtml(row.pickLabel || '—')}</td>
+        <td>${escapeHtml(String(row.projectedValue ?? '—'))}</td>
+        <td>${hit}</td>
+        <td>${expected}</td>
+        <td>${max || '—'}</td>
+      </tr>
+    `;
+  }).join('');
+
+  return `
+    <details class="template-grade-breakdown">
+      <summary>Per-field breakdown</summary>
+      <div class="table-wrap">
+        <table class="simple-table compact">
+          <thead>
+            <tr>
+              <th>Field</th>
+              <th>Pick</th>
+              <th>Model View</th>
+              <th>Hit Odds</th>
+              <th>Exp Pts</th>
+              <th>Max</th>
+            </tr>
+          </thead>
+          <tbody>${body}</tbody>
+        </table>
+      </div>
+    </details>
+  `;
+}
+
+function renderProjectionGradePanel(picks) {
+  if (!templateProjectionGradePanel) return;
+
+  const users = configuredUsers.length
+    ? configuredUsers
+    : [...new Set((picks || []).map((row) => row.user).filter(Boolean))];
+
+  const rowsByUser = new Map((picks || []).map((row) => [row.user, row]));
+  const grades = users
+    .map((user) => ({ user, row: rowsByUser.get(user) || null, grade: rowsByUser.get(user)?.projection_grade || null }))
+    .filter(Boolean);
+
+  const availableGrades = grades.filter((entry) => entry.grade);
+  if (!availableGrades.length) {
+    templateProjectionGradePanel.innerHTML = `
+      <section class="template-grade-card empty">
+        <header>
+          <h3>Projection Grade</h3>
+          <span class="chip">No grades yet</span>
+        </header>
+        <div class="muted">Save a championship template to generate a projection grade snapshot.</div>
+      </section>
+    `;
+    return;
+  }
+
+  const modelVersion = availableGrades[0]?.grade?.model_version || '—';
+  const round = availableGrades[0]?.grade?.round || '—';
+  const sorted = [...availableGrades].sort((a, b) =>
+    (Number(b.grade?.expected_points || 0) - Number(a.grade?.expected_points || 0)) ||
+    String(a.user || '').localeCompare(String(b.user || ''))
+  );
+  const leader = sorted[0];
+
+  const cards = grades.map(({ user, row, grade }) => {
+    if (!row || !grade) {
+      return `
+        <article class="template-grade-card empty">
+          <header>
+            <h3>${escapeHtml(user)}</h3>
+            <span class="chip">No grade</span>
+          </header>
+          <div class="muted">Save picks to generate a projection grade snapshot.</div>
+        </article>
+      `;
+    }
+
+    const expectedPoints = Number(grade.expected_points || 0);
+    const maxModeledPoints = Number(grade.max_modeled_points || 0);
+    const leaderGap = Number(leader?.grade?.expected_points || 0) - expectedPoints;
+    const coverage = grade.model_coverage || {};
+    const gridStrength = grade.grid_order_strength || {};
+    const champOdds = grade.champ_hit_odds || {};
+    const gradeChip = grade.grade || '—';
+
+    return `
+      <article class="template-grade-card">
+        <header class="template-grade-card-head">
+          <div>
+            <h3>${escapeHtml(user)}</h3>
+            <div class="template-grade-sub">
+              R${escapeHtml(String(grade.round || '—'))} · Model ${escapeHtml(String(grade.model_version || '—'))}
+              ${leaderGap > 0.01 ? ` · ${leaderGap.toFixed(1)} pts behind` : ' · Projection leader'}
+            </div>
+          </div>
+          <div class="template-grade-chip-stack">
+            <span class="chip grade ${gradeChipClass(gradeChip)}">${escapeHtml(gradeChip)}</span>
+            <span class="chip">Coverage ${percentLabel(coverage.field_pct, 0)}</span>
+          </div>
+        </header>
+
+        <div class="template-grade-metrics">
+          <div class="template-grade-metric">
+            <span>${escapeHtml(grade.summary_labels?.expected_points || 'Expected Championship Points')}</span>
+            <strong>${expectedPoints.toFixed(1)}</strong>
+            <small>${maxModeledPoints ? `of ${maxModeledPoints.toFixed(1)} modeled pts` : 'No modeled fields yet'}</small>
+          </div>
+          <div class="template-grade-metric">
+            <span>${escapeHtml(grade.summary_labels?.title_call_accuracy_odds || 'Title Call Accuracy Odds')}</span>
+            <strong>${percentLabel(champOdds.combined, 0)}</strong>
+            <small>D ${percentLabel(champOdds.driver, 0)} · C ${percentLabel(champOdds.constructor, 0)}</small>
+          </div>
+          <div class="template-grade-metric">
+            <span>${escapeHtml(grade.summary_labels?.grid_order_strength || 'Grid Order Strength (WDC / WCC)')}</span>
+            <strong>${percentLabel(gridStrength.combined, 0)}</strong>
+            <small>WDC ${percentLabel(gridStrength.wdc, 0)} · WCC ${percentLabel(gridStrength.wcc, 0)}</small>
+          </div>
+          <div class="template-grade-metric">
+            <span>${escapeHtml(grade.summary_labels?.risk_score || 'Risk Level')}</span>
+            <strong>${escapeHtml(String(grade.risk_level || '—'))}</strong>
+            <small>${fixedLabel(grade.risk_score, 1)}/100 risk score</small>
+          </div>
+        </div>
+
+        <div class="template-grade-callout-grid">
+          ${calloutsHtml('Strongest calls', grade.strongest_calls)}
+          ${calloutsHtml('Weakest calls', grade.weakest_calls)}
+        </div>
+
+        ${perFieldBreakdownHtml(grade)}
+      </article>
+    `;
+  }).join('');
+
+  templateProjectionGradePanel.innerHTML = `
+    <section id="projectionGradeCard" class="template-grade-shell">
+      <div class="template-grade-head">
+        <h3>Projection Grade</h3>
+        <div class="template-grade-head-meta">
+          <span class="chip">Round ${escapeHtml(String(round))}</span>
+          <span class="chip">Model ${escapeHtml(String(modelVersion))}</span>
+        </div>
+      </div>
+      <p class="muted">Live projection-grade snapshot for saved championship picks. Narrative fields remain manual and are excluded from modeled expected points.</p>
+      <div class="template-grade-grid">${cards}</div>
+    </section>
+  `;
+}
+
 function renderCompare(picks) {
   const users = configuredUsers.length
     ? configuredUsers
@@ -562,12 +770,14 @@ function renderCompare(picks) {
 
     const out = row.out_of_box || {};
     const chaos = row.chaos || {};
+    const grade = row.projection_grade || null;
+    const gradeLabel = grade?.grade ? ` · ${grade.grade}` : '';
 
     return `
       <article class="template-compare-user">
         <header>
           <h3>${escapeHtml(user)}</h3>
-          <span class="chip">${filledCount} fields</span>
+          <span class="chip">${filledCount} fields${escapeHtml(gradeLabel)}</span>
         </header>
 
         <div class="template-compare-block">
@@ -596,6 +806,8 @@ function renderCompare(picks) {
       </article>
     `;
   }).join('');
+
+  renderProjectionGradePanel(picks);
 }
 
 function renderPicksStatus(picks) {

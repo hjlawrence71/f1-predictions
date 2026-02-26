@@ -525,7 +525,27 @@ async function loadPicksStatus(season) {
     picksStatus.textContent = 'No season template picks yet.';
     return;
   }
-  picksStatus.textContent = 'Season template saved.';
+
+  const badges = picks
+    .filter((row) => row?.user)
+    .sort((a, b) => String(a.user).localeCompare(String(b.user)))
+    .map((row) => {
+      const grade = row?.projection_grade || null;
+      const gradeText = grade?.grade ? `Championship card grade: ${grade.grade}` : 'Championship card grade: —';
+      const roundText = grade?.round ? ` · R${grade.round}` : '';
+      return `
+        <a class="chip" href="/template.html?season=${season}#projectionGradeCard" title="${gradeText}${roundText}">
+          ${row.user}: ${grade?.grade || '—'}${roundText}
+        </a>
+      `;
+    }).join(' ');
+
+  picksStatus.innerHTML = `
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+      <span>Season template saved.</span>
+      ${badges}
+    </div>
+  `;
 }
 
 
