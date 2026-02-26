@@ -4198,7 +4198,9 @@ async function importOpenF1TestingSeason({ season, force = false }) {
 
   data.testing_timing = (data.testing_timing || []).filter((row) => row.season !== season);
   data.testing_timing.push(...testingTimingRows);
+  const preWriteSnapshot = createPreWriteSnapshot(`pre-import-testing-${season}`);
   saveDb(data);
+  const postWriteSnapshot = createPostWriteSnapshot(`post-import-testing-${season}`);
 
   appendImportAudit({
     source: 'openf1',
@@ -4215,6 +4217,8 @@ async function importOpenF1TestingSeason({ season, force = false }) {
   return {
     season,
     reused: false,
+    preWriteSnapshot,
+    postWriteSnapshot,
     imported: {
       testingTiming: testingTimingRows.length,
       meetings: testingMeetings.length,
@@ -4627,7 +4631,9 @@ async function importOpenF1Round({ season, round }) {
   const grid = resolveGridDrivers(data, 2026);
   normalizePredictionIds(data, grid);
   rebuildActualsAndScores(data);
+  const preWriteSnapshot = createPreWriteSnapshot(`pre-import-round-${season}-r${round}`);
   saveDb(data);
+  const postWriteSnapshot = createPostWriteSnapshot(`post-import-round-${season}-r${round}`);
 
   const imported = {
     qualifying: qualifyingRows.length,
@@ -4663,7 +4669,9 @@ async function importOpenF1Round({ season, round }) {
         name: session.session_name || null
       }))
     },
-    imported
+    imported,
+    preWriteSnapshot,
+    postWriteSnapshot
   };
 }
 
