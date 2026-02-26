@@ -11,6 +11,16 @@ const schedulePath = path.join(dataDir, 'schedule_2026.json');
 const gridPath = path.join(dataDir, 'current_grid.json');
 const sourceSchedulePath = path.join(defaultDataDir, 'schedule_2026.json');
 const sourceGridPath = path.join(defaultDataDir, 'current_grid.json');
+const isRailway = Boolean(
+  process.env.RAILWAY_PROJECT_ID ||
+  process.env.RAILWAY_ENVIRONMENT_ID ||
+  process.env.RAILWAY_SERVICE_ID ||
+  process.env.RAILWAY_STATIC_URL
+);
+const railwayEnv = String(process.env.RAILWAY_ENVIRONMENT_NAME || '').trim().toLowerCase();
+const isProduction = String(process.env.NODE_ENV || '').trim().toLowerCase() === 'production' || railwayEnv === 'production';
+const enforcePersistentDataDir =
+  ['1', 'true', 'yes', 'y'].includes(String(process.env.ENFORCE_PERSISTENT_DATA_DIR || process.env.DEPLOY_WALL_ENFORCE_PERSISTENT_DATA_DIR || '').trim().toLowerCase());
 
 const requiredRootFiles = [
   path.join(root, 'config.json')
@@ -24,6 +34,29 @@ for (const p of requiredRootFiles) {
 
 if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true });
+}
+
+const resolvedRoot = path.resolve(root);
+const resolvedDefaultData = path.resolve(defaultDataDir);
+const resolvedData = path.resolve(dataDir);
+const usesRecommendedVolumePath = resolvedData === '/data' || resolvedData.startsWith('/data/');
+const insideAppDir = resolvedData === resolvedRoot || resolvedData.startsWith(resolvedRoot + path.sep);
+const likelyEphemeralOnRailway = isRailway && (resolvedData === resolvedDefaultData || insideAppDir) && !usesRecommendedVolumePath;
+
+if (likelyEphemeralOnRailway) {
+  const msg = [
+    '[preflight] WARNING: DATA_DIR appears to be on ephemeral Railway app storage.',
+    `[preflight] DATA_DIR=${dataDir}`,
+    '[preflight] To protect saved picks, mount a Railway volume at /data and set DATA_DIR=/data.'
+  ].join('\n');
+
+  if (enforcePersistentDataDir) {
+    throw new Error(`${msg}\n[preflight] Startup blocked because ENFORCE_PERSISTENT_DATA_DIR=1.`);
+  }
+
+  if (isProduction) {
+    console.warn(msg);
+  }
 }
 
 // Seed schedule/grid into mounted DATA_DIR on first cloud boot.

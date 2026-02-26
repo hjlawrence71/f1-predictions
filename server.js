@@ -12,7 +12,10 @@ const DEFAULT_DATA_DIR = path.join(ROOT_DIR, 'data');
 const DATA_DIR = process.env.DATA_DIR || DEFAULT_DATA_DIR;
 const DB_PATH = path.join(DATA_DIR, 'db.json');
 const BACKUP_DIR = path.join(DATA_DIR, 'backups');
-const MAX_DB_BACKUPS = 25;
+const MAX_DB_BACKUPS_RAW = Number.parseInt(process.env.MAX_DB_BACKUPS || '60', 10);
+const MAX_DB_BACKUPS = Number.isFinite(MAX_DB_BACKUPS_RAW)
+  ? Math.max(10, Math.min(500, MAX_DB_BACKUPS_RAW))
+  : 60;
 const SNAPSHOT_FILE_RE = /^db-[a-z0-9T:\-\.]+(?:--[a-z0-9\-]+)?\.json$/i;
 const IMPORT_AUDIT_PATH = path.join(DATA_DIR, 'import_audit.json');
 const MAX_IMPORT_AUDIT_ROWS = 500;
@@ -25,6 +28,20 @@ const OPENF1_BASE_URL = process.env.OPENF1_BASE_URL || 'https://api.openf1.org/v
 const OPENF1_TIMEOUT_PARSED = Number.parseInt(process.env.OPENF1_TIMEOUT_MS || '20000', 10);
 const OPENF1_TIMEOUT_MS = Number.isFinite(OPENF1_TIMEOUT_PARSED) ? OPENF1_TIMEOUT_PARSED : 20000;
 const PICKS_LOCK_TIME_ZONE = process.env.PICKS_LOCK_TIME_ZONE || 'America/Chicago';
+const RAILWAY_ENVIRONMENT_NAME = String(process.env.RAILWAY_ENVIRONMENT_NAME || '').trim();
+const IS_RAILWAY_RUNTIME = Boolean(
+  process.env.RAILWAY_PROJECT_ID ||
+  process.env.RAILWAY_ENVIRONMENT_ID ||
+  process.env.RAILWAY_SERVICE_ID ||
+  process.env.RAILWAY_STATIC_URL
+);
+const IS_PRODUCTION_RUNTIME =
+  String(process.env.NODE_ENV || '').trim().toLowerCase() === 'production' ||
+  RAILWAY_ENVIRONMENT_NAME.toLowerCase() === 'production';
+const ENFORCE_PERSISTENT_DATA_DIR = toBool(process.env.ENFORCE_PERSISTENT_DATA_DIR || process.env.DEPLOY_WALL_ENFORCE_PERSISTENT_DATA_DIR);
+const ALLOW_DEMO_ENDPOINTS = process.env.ALLOW_DEMO_ENDPOINTS === undefined
+  ? !IS_PRODUCTION_RUNTIME
+  : toBool(process.env.ALLOW_DEMO_ENDPOINTS);
 const PICKS_LOCK_DATE_OVERRIDES = {
   2026: '2026-03-06'
 };
@@ -701,6 +718,109 @@ function saveDb(data) {
   ensureStorageDirs();
   createDbSnapshot('auto-save');
   writeDbRaw(JSON.stringify(data, null, 2));
+}
+
+function getStorageSafetyStatus() {
+  const resolvedRoot = path.resolve(ROOT_DIR);
+  const resolvedDefaultData = path.resolve(DEFAULT_DATA_DIR);
+  const resolvedData = path.resolve(DATA_DIR);
+  const insideAppDir = resolvedData === resolvedRoot || resolvedData.startsWith(resolvedRoot + path.sep);
+  const usesRecommendedVolumePath = resolvedData === '/data' || resolvedData.startsWith('/data/');
+  const likelyEphemeralOnRailway = IS_RAILWAY_RUNTIME && (resolvedData === resolvedDefaultData || insideAppDir) && !usesRecommendedVolumePath;
+
+  return {
+    isRailway: IS_RAILWAY_RUNTIME,
+    isProduction: IS_PRODUCTION_RUNTIME,
+    railwayEnvironment: RAILWAY_ENVIRONMENT_NAME || null,
+    dataDir: DATA_DIR,
+    resolvedDataDir: resolvedData,
+    dbPath: DB_PATH,
+    defaultDataDir: DEFAULT_DATA_DIR,
+    usesRecommendedVolumePath,
+    likelyEphemeralOnRailway,
+    enforcePersistentDataDir: ENFORCE_PERSISTENT_DATA_DIR,
+    allowDemoEndpoints: ALLOW_DEMO_ENDPOINTS,
+    recommended: {
+      dataDir: '/data',
+      railwayVolumeMountPath: '/data',
+      envVar: 'DATA_DIR=/data'
+    }
+  };
+}
+
+function logStorageSafetyWarningIfNeeded() {
+  const storage = getStorageSafetyStatus();
+  if (!storage.likelyEphemeralOnRailway) return;
+
+  const message = [
+    '[storage] WARNING: DATA_DIR appears to be on ephemeral app storage in Railway.',
+    `[storage] Current DATA_DIR: ${storage.dataDir}`,
+    '[storage] To protect picks, mount a Railway volume at /data and set DATA_DIR=/data.'
+  ].join('\n');
+
+  if (ENFORCE_PERSISTENT_DATA_DIR) {
+    throw new Error(`${message}\n[storage] Startup blocked because ENFORCE_PERSISTENT_DATA_DIR=1.`);
+  }
+
+  console.warn(message);
+}
+
+function buildStoragePersistenceCheck() {
+  const storage = getStorageSafetyStatus();
+
+  if (!storage.isRailway) {
+    return {
+      id: 'storage_persistence',
+      label: 'Storage persistence',
+      status: 'ok',
+      ok: true,
+      message: `Local/runtime data path: ${storage.dataDir}`,
+      details: storage
+    };
+  }
+
+  if (storage.likelyEphemeralOnRailway) {
+    return {
+      id: 'storage_persistence',
+      label: 'Storage persistence',
+      status: storage.isProduction ? 'fail' : 'warn',
+      ok: !storage.isProduction,
+      message: 'DATA_DIR looks ephemeral on Railway. Mount a volume at /data and set DATA_DIR=/data.',
+      details: storage
+    };
+  }
+
+  return {
+    id: 'storage_persistence',
+    label: 'Storage persistence',
+    status: 'ok',
+    ok: true,
+    message: `Persistent data path configured: ${storage.dataDir}`,
+    details: storage
+  };
+}
+
+function createPreWriteSnapshot(reason = 'pre-write') {
+  try {
+    return createDbSnapshot(reason);
+  } catch (error) {
+    console.error('[snapshot]', 'pre-write snapshot failed:', error?.message || error);
+    return null;
+  }
+}
+
+function createPostWriteSnapshot(reason = 'post-write') {
+  try {
+    return createDbSnapshot(reason);
+  } catch (error) {
+    console.error('[snapshot]', 'post-write snapshot failed:', error?.message || error);
+    return null;
+  }
+}
+
+function assertDemoEndpointsAllowed() {
+  if (ALLOW_DEMO_ENDPOINTS) return;
+  throw fail('Demo endpoints are disabled in production.', 403);
 }
 
 function loadImportAudit() {
@@ -5526,6 +5646,7 @@ function buildBackupHealthCheck() {
 async function buildHealthCheckReport(season) {
   const data = loadDb();
   const checks = [
+    buildStoragePersistenceCheck(),
     buildDataFreshnessCheck(data, season),
     await buildOpenF1ConnectivityCheck(season),
     buildScheduleValidityCheck(season),
@@ -5607,6 +5728,7 @@ app.post('/api/predictions', (req, res) => {
   const round = requireRound(roundRaw);
 
   const data = loadDb();
+  const preWriteSnapshot = createPreWriteSnapshot(`pre-weekly-r${round}-${user}`);
   const now = new Date().toISOString();
   let pred = data.predictions.find(p => p.user === user && p.season === season && p.round === round);
 
@@ -5642,7 +5764,8 @@ app.post('/api/predictions', (req, res) => {
 
   updateAllPredictionScores(data);
   saveDb(data);
-  res.json({ ok: true });
+  const postWriteSnapshot = createPostWriteSnapshot(`post-weekly-r${round}-${user}`);
+  res.json({ ok: true, preWriteSnapshot, postWriteSnapshot });
 });
 
 app.get('/api/predictions', (req, res) => {
@@ -5800,6 +5923,10 @@ app.get('/api/admin/health-check', async (req, res, next) => {
   }
 });
 
+app.get('/api/admin/storage-safety', (req, res) => {
+  res.json(getStorageSafetyStatus());
+});
+
 app.get('/api/admin/snapshots', (req, res) => {
   const dbExists = fs.existsSync(DB_PATH);
   const dbStat = dbExists ? fs.statSync(DB_PATH) : null;
@@ -5814,6 +5941,19 @@ app.get('/api/admin/snapshots', (req, res) => {
     snapshots: listSnapshots()
   };
   res.json(payload);
+});
+
+app.get('/api/admin/export-db', (req, res) => {
+  const cfg = loadConfig();
+  const user = requireKnownUser(cfg, req.query?.user, req.query?.pin);
+  if (!fs.existsSync(DB_PATH)) throw fail('Database file not found.', 404);
+
+  const filename = `f1-picks-db-export-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.setHeader('X-Exported-By', user);
+  res.setHeader('X-Db-Path', DB_PATH);
+  res.send(fs.readFileSync(DB_PATH, 'utf8'));
 });
 
 app.post('/api/admin/snapshots', (req, res) => {
@@ -5883,6 +6023,7 @@ app.post('/api/season/picks', (req, res) => {
   }
 
   const data = loadDb();
+  const preWriteSnapshot = createPreWriteSnapshot(`pre-champ-${season}-${user}`);
   const now = new Date().toISOString();
   let row = data.season_predictions.find(p => p.user === user && p.season === season);
 
@@ -5906,7 +6047,8 @@ app.post('/api/season/picks', (req, res) => {
   row.updated_at = now;
 
   saveDb(data);
-  res.json({ ok: true });
+  const postWriteSnapshot = createPostWriteSnapshot(`post-champ-${season}-${user}`);
+  res.json({ ok: true, preWriteSnapshot, postWriteSnapshot });
 });
 
 app.get('/api/season/summary', (req, res) => {
@@ -5978,6 +6120,7 @@ app.post('/api/season/adjudication', (req, res) => {
   const season = requireSeason(seasonRaw);
 
   const data = loadDb();
+  const preWriteSnapshot = createPreWriteSnapshot(`pre-adjud-${season}-${user}`);
   const now = new Date().toISOString();
   let row = data.season_predictions.find((entry) => entry.user === user && entry.season === season);
 
@@ -6004,11 +6147,14 @@ app.post('/api/season/adjudication', (req, res) => {
   row.updated_at = now;
 
   saveDb(data);
+  const postWriteSnapshot = createPostWriteSnapshot(`post-adjud-${season}-${user}`);
 
   const standings = getSeasonStandings(data, season);
   const summary = buildSeasonAdjudicationSummary(row, standings);
   res.json({
     ok: true,
+    preWriteSnapshot,
+    postWriteSnapshot,
     user,
     season,
     adjudication: row.adjudication,
@@ -6307,6 +6453,7 @@ app.get('/api/results', (req, res) => {
 });
 
 app.post('/api/demo/season-picks', (req, res) => {
+  assertDemoEndpointsAllowed();
   const season = requireSeason(req.body?.season || 2026);
   const data = loadDb();
   const users = getConfiguredUsers();
@@ -6333,6 +6480,7 @@ app.post('/api/demo/season-picks', (req, res) => {
 });
 
 app.post('/api/demo/seed', (req, res) => {
+  assertDemoEndpointsAllowed();
   const roundsRaw = req.body?.rounds;
   const rounds = roundsRaw === undefined || roundsRaw === null ? 8 : toInt(roundsRaw);
   if (!rounds || rounds < 1 || rounds > 24) {
@@ -6354,11 +6502,17 @@ app.post('/api/demo/seed', (req, res) => {
 
 app.get('/health', (req, res) => {
   const ready = fs.existsSync(DB_PATH) && fs.existsSync(path.join(ROOT_DIR, 'config.json'));
+  const storage = getStorageSafetyStatus();
   res.status(ready ? 200 : 503).json({
     ok: ready,
     uptimeSec: Math.round(process.uptime()),
     dbPath: DB_PATH,
-    configPath: path.join(ROOT_DIR, 'config.json')
+    configPath: path.join(ROOT_DIR, 'config.json'),
+    storage: {
+      dataDir: storage.dataDir,
+      likelyEphemeralOnRailway: storage.likelyEphemeralOnRailway,
+      usesRecommendedVolumePath: storage.usesRecommendedVolumePath
+    }
   });
 });
 
@@ -6375,6 +6529,8 @@ app.use((err, req, res, next) => {
 
   res.status(status).send(message);
 });
+
+logStorageSafetyWarningIfNeeded();
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`F1 predictions app running on http://localhost:${PORT}`);
