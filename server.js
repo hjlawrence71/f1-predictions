@@ -88,6 +88,12 @@ const DRIVER_TEAM_ORDER_BY_SEASON = {
 };
 
 const DEFAULT_DRIVER_TEAM_ORDER = DRIVER_TEAM_ORDER_BY_SEASON[2026];
+const INTELLIGENCE_EXCLUDED_NAME_TOKENS_BY_SEASON = Object.freeze({
+  2025: ['iwasa', 'hirakawa', 'aron', 'shields', 'crawford', 'browning']
+});
+const INTELLIGENCE_EXCLUDED_FULL_NAMES_BY_SEASON = Object.freeze({
+  2025: ['arthur leclerc']
+});
 
 const SIDE_BET_DEFS = {
   poleConverts: { pickField: 'sidebet_pole_converts', scoreField: 'score_sidebet_pole_converts', points: 1, bucket: 'stable' },
@@ -2087,7 +2093,8 @@ function computeDriverIntelligence(data, season, options = {}) {
   return rows.filter((row) => {
     const raceStarts = Number(row.sample?.race_starts || 0);
     const qualiStarts = Number(row.sample?.quali_starts || 0);
-    return raceStarts > 0 || qualiStarts > 0;
+    if (!(raceStarts > 0 || qualiStarts > 0)) return false;
+    return !isExcludedIntelligenceDriver(season, row);
   });
 }
 
@@ -2122,6 +2129,18 @@ function normalizeDriverNameKey(name) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, ' ')
     .trim();
+}
+
+function isExcludedIntelligenceDriver(season, row) {
+  const fullNames = INTELLIGENCE_EXCLUDED_FULL_NAMES_BY_SEASON[season] || [];
+  const tokenList = INTELLIGENCE_EXCLUDED_NAME_TOKENS_BY_SEASON[season] || [];
+  if (!fullNames.length && !tokenList.length) return false;
+
+  const nameKey = normalizeDriverNameKey(row?.driverName || '');
+  const idKey = normalizeDriverNameKey(String(row?.driverId || '').replace(/[:_-]+/g, ' '));
+
+  if (fullNames.includes(nameKey) || fullNames.includes(idKey)) return true;
+  return tokenList.some((token) => nameKey.includes(token) || idKey.includes(token));
 }
 
 function normalizeStatsView(viewRaw) {
