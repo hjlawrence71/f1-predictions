@@ -69,7 +69,7 @@ const DRIVER_TEAM_ORDER_BY_SEASON = {
     'Racing Bulls',
     'Aston Martin',
     'Haas F1 Team',
-    'Kick Sauber',
+    'Audi',
     'Alpine'
   ],
   2026: [
@@ -1738,7 +1738,7 @@ function computeDriverIntelligence(data, season, options = {}) {
     raceTimingByDriverRound.get(key).push(row);
   }
 
-  return grid.map((driver) => {
+  const rows = grid.map((driver) => {
     const teammateId = teammateByDriver.get(driver.driverId);
     const driverResults = results.filter(r => r.driverId === driver.driverId);
     const driverQual = qual.filter(q => q.driverId === driver.driverId);
@@ -2082,6 +2082,12 @@ function computeDriverIntelligence(data, season, options = {}) {
         source_season: season
       }
     };
+  });
+
+  return rows.filter((row) => {
+    const raceStarts = Number(row.sample?.race_starts || 0);
+    const qualiStarts = Number(row.sample?.quali_starts || 0);
+    return raceStarts > 0 || qualiStarts > 0;
   });
 }
 

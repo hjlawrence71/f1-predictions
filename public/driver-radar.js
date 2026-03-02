@@ -29,7 +29,7 @@ const TEAM_ORDER_BY_SEASON = {
     'Racing Bulls',
     'Aston Martin',
     'Haas F1 Team',
-    'Kick Sauber',
+    'Audi',
     'Alpine'
   ],
   2026: [
@@ -59,7 +59,7 @@ const TEAM_META_BY_SEASON = {
     'Racing Bulls': { officialName: 'Visa Cash App Racing Bulls Formula One Team', logoSlug: 'racing-bulls' },
     'Aston Martin': { officialName: 'Aston Martin Aramco Formula One Team', logoSlug: 'aston-martin' },
     'Haas F1 Team': { officialName: 'MoneyGram Haas F1 Team', logoSlug: 'haas' },
-    'Kick Sauber': { officialName: 'Stake F1 Team Kick Sauber', logoSlug: 'audi' },
+    'Audi': { officialName: 'Audi F1 Team', logoSlug: 'audi' },
     'Alpine': { officialName: 'BWT Alpine F1 Team', logoSlug: 'alpine' }
   },
   2026: {
@@ -238,20 +238,6 @@ function teamKey(teamName, season = activeSeason()) {
     normalized === 'Haas' ||
     normalized === 'Haas F1 Team'
   ) return 'Haas F1 Team';
-
-  if (season === 2025) {
-    if (
-      raw === 'kick sauber' ||
-      raw === 'stake f1 team kick sauber' ||
-      raw === 'stake sauber' ||
-      raw === 'sauber' ||
-      raw === 'audi' ||
-      raw === 'audi revolut f1 team' ||
-      normalized === 'Kick Sauber' ||
-      normalized === 'Audi' ||
-      normalized === 'Sauber'
-    ) return 'Kick Sauber';
-  }
 
   if (
     raw === 'kick sauber' ||
