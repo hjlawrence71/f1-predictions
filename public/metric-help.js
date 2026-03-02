@@ -114,6 +114,16 @@ const METRIC_HELP = {
     formula: 'Rounds ahead : rounds behind in qualifying.',
     better: 'More wins than losses is better.'
   },
+  teammate_qual_edge: {
+    description: 'Combined qualifying pace edge versus teammate.',
+    formula: 'Uses the season average lap delta across Q1/Q2/Q3, with stage context shown underneath.',
+    better: 'Lower (more negative) is better.'
+  },
+  session_conversion: {
+    description: 'How often the driver converts qualifying sessions into deeper runs.',
+    formula: 'Primary read is Q3 rate, with Q3 appearances and Q1 exits as context.',
+    better: 'Higher Q3 rate and fewer Q1 exits are better.'
+  },
   r_pace_delta: {
     description: 'Spread of race pace across compounds/stints.',
     formula: 'Slowest stint average minus fastest stint average.',
@@ -134,6 +144,16 @@ const METRIC_HELP = {
     formula: 'Average lap-time delta versus teammate.',
     better: 'Lower (more negative) is better.'
   },
+  pace_package: {
+    description: 'Race pace summary that blends raw stint spread with lap-to-lap stability.',
+    formula: 'Shown as stint spread plus consistency context.',
+    better: 'Lower spread and lower variance are better.'
+  },
+  position_craft: {
+    description: 'How well the driver moves through the field over a race distance.',
+    formula: 'Built from net positions gained plus first-lap and recovery context.',
+    better: 'Higher positive movement is better.'
+  },
   c_weekend_score: {
     description: 'Composite weekend performance score.',
     formula: '0.45*quali score + 0.35*race score + 0.20*points.',
@@ -153,6 +173,21 @@ const METRIC_HELP = {
     description: 'Quick read of qualifying and race direction.',
     formula: 'Last-5 trend directions for qualifying and race.',
     better: 'Improving in both is ideal.'
+  },
+  form_trend: {
+    description: 'Direction of the driver weekend trajectory.',
+    formula: 'Uses recent qualifying and race trend direction together.',
+    better: 'Improving in both is better.'
+  },
+  risk_level: {
+    description: 'Simple volatility read for how trustworthy the current sample is.',
+    formula: 'Combines DNF rate, race pace variance, and sample size.',
+    better: 'Lower risk is better.'
+  },
+  sample_size: {
+    description: 'How much real round data is behind the card.',
+    formula: 'Built from official race starts and qualifying starts.',
+    better: 'Higher is more reliable.'
   },
   points: {
     description: 'Championship points accumulated in selected season.',

@@ -535,6 +535,79 @@ function renderMetricTile({
   `;
 }
 
+function renderDetailRow(label, key, value) {
+  return `<div><dt>${metricLabelHtml(label, key, 'dl-label')}</dt><dd>${value}</dd></div>`;
+}
+
+function renderDetailSection(title, rows) {
+  if (!Array.isArray(rows) || !rows.length) return '';
+  return `
+    <section class="intel-detail-section">
+      <div class="intel-subtitle">${title}</div>
+      <dl>${rows.join('')}</dl>
+    </section>
+  `;
+}
+
+function formatStageGapCompact(qi) {
+  const pieces = ['q1', 'q2', 'q3']
+    .map((stage) => {
+      const value = qi?.teammate_gap_by_stage?.[stage]?.avg_ms;
+      if (!Number.isFinite(Number(value))) return null;
+      return `${stage.toUpperCase()} ${formatDeltaSeconds(value, 3, true)}`;
+    })
+    .filter(Boolean);
+
+  return pieces.length ? pieces.join(' · ') : 'No stage split yet';
+}
+
+function formatSampleSizeCompact(sample) {
+  const raceStarts = Number(sample?.race_starts || 0);
+  const qualiStarts = Number(sample?.quali_starts || 0);
+  const compared = Math.max(raceStarts, qualiStarts);
+
+  if (!compared) return '—';
+  if (raceStarts && qualiStarts && raceStarts === qualiStarts) {
+    return `${raceStarts} round${raceStarts === 1 ? '' : 's'}`;
+  }
+
+  const pieces = [];
+  if (raceStarts) pieces.push(`${raceStarts} race${raceStarts === 1 ? '' : 's'}`);
+  if (qualiStarts) pieces.push(`${qualiStarts} quali`);
+  return pieces.join(' · ');
+}
+
+function computeRiskProfile(ri, sample) {
+  const dnfRate = Number(ri?.dnf_rate);
+  const consistency = Number(ri?.lap_pace_consistency_ms);
+  const roundSample = Math.max(Number(sample?.race_starts || 0), Number(sample?.quali_starts || 0));
+
+  let score = 0;
+  score += Number.isFinite(dnfRate) ? Math.min(1, Math.max(0, dnfRate * 2.5)) * 0.45 : 0.12;
+  score += Number.isFinite(consistency) ? Math.min(1, Math.max(0, (consistency - 250) / 900)) * 0.35 : 0.1;
+  score += roundSample >= 6 ? 0 : roundSample >= 3 ? 0.1 : 0.22;
+
+  let label = 'Medium';
+  let tone = 'warn';
+  if (score < 0.28) {
+    label = 'Low';
+    tone = 'good';
+  } else if (score >= 0.55) {
+    label = 'High';
+    tone = 'bad';
+  }
+
+  const dnfText = Number.isFinite(dnfRate) ? `DNF ${formatPct(dnfRate, 0)}` : 'DNF —';
+  const sampleText = formatSampleSizeCompact(sample);
+
+  return {
+    score,
+    label,
+    tone,
+    secondary: `${dnfText} · ${sampleText}`
+  };
+}
+
 function renderTeamAtlas(stats) {
 
   if (!teamAtlas || !teamDetail) return;
@@ -690,11 +763,11 @@ function bindExpandButtons() {
       const isHidden = panel.hasAttribute('hidden');
       if (isHidden) {
         panel.removeAttribute('hidden');
-        btn.textContent = 'Collapse';
+        btn.textContent = 'Hide details';
         btn.setAttribute('aria-expanded', 'true');
       } else {
         panel.setAttribute('hidden', '');
-        btn.textContent = 'Expand';
+        btn.textContent = 'Expand details';
         btn.setAttribute('aria-expanded', 'false');
       }
     });
@@ -740,10 +813,70 @@ function buildDriverIntelCard(s) {
   const qTrendRun = summarizePositionSeries(qTrend.series || []);
   const rTrendRun = summarizePositionSeries(rTrend.series || []);
   const trendSnapshot = `Q ${qTrendRun} · R ${rTrendRun}`;
+  const riskProfile = computeRiskProfile(ri, s.sample);
+  const sampleSize = formatSampleSizeCompact(s.sample);
+  const sessionConversionSecondary = `${qi.q3_appearances ?? 0} Q3 · ${qi.q1_knockouts ?? 0} Q1 exits`;
+  const teammateEdgeSecondary = `Best ${formatDeltaSeconds(bestQualiGapMs, 3, true)} · ${formatStageGapCompact(qi)}`;
+  const pacePackageSecondary = racePaceDeltaMs === null
+    ? 'No compound split yet'
+    : `${formatMs(racePaceDeltaMs, 0)} stint spread · ${formatMs(ri.lap_pace_consistency_ms, 0)} sigma`;
+  const positionCraftSecondary = `Lap 1 ${formatSigned(ri.first_lap_gain_loss, 2)} · Recovery ${formatSigned(ri.recovery_index, 2)}`;
+  const formTrendSecondary = `${trendSnapshot} · ${qTrendLabel}/${rTrendLabel}`;
+  const qHitSecondary = `Avg delta ${formatSigned(ci.quali_to_race_conversion?.avg_delta, 2)}`;
 
   const stintHtml = stintRows.length
     ? stintRows.map((row) => `<span class="chip">${row.compound}: ${formatLapTime(row.avg_lap_ms)} (${row.laps} laps)</span>`).join('')
     : '<span class="chip">No race timing laps yet</span>';
+
+  const qualDetails = [
+    renderDetailSection('Session Depth', [
+      renderDetailRow('Q3 appearances', 'q3_appearances', qi.q3_appearances ?? 0),
+      renderDetailRow('Q2 appearances', 'q2_appearances', qi.q2_appearances ?? 0),
+      renderDetailRow('Q1 knockouts', 'q1_knockouts', qi.q1_knockouts ?? 0),
+      renderDetailRow('Q2 survival rate', 'q2_survival_rate', formatPct(qi.stage_survival_rate?.q2, 1)),
+      renderDetailRow('Q3 survival rate', 'q3_survival_rate', formatPct(qi.stage_survival_rate?.q3, 1))
+    ]),
+    renderDetailSection('Pace Change', [
+      renderDetailRow('Q1→Q2 delta', 'q1_q2_delta', `${formatDeltaSeconds(qi.q1_to_q2_improvement_ms, 3, true)} (${formatMs(qi.q1_to_q2_improvement_ms, 0)})`),
+      renderDetailRow('Q2→Q3 delta', 'q2_q3_delta', `${formatDeltaSeconds(qi.q2_to_q3_improvement_ms, 3, true)} (${formatMs(qi.q2_to_q3_improvement_ms, 0)})`),
+      renderDetailRow('Pole count', 'pole_count', qi.pole_count ?? 0),
+      renderDetailRow('Worst grid position', 'worst_grid_position', qi.worst_grid_position ?? '—')
+    ]),
+    renderDetailSection('Stage Split vs Teammate', [
+      renderDetailRow('Teammate gap Q1 avg', 'teammate_gap_q1_avg', `${formatDeltaSeconds(qi.teammate_gap_by_stage?.q1?.avg_ms, 3, true)} (${formatMs(qi.teammate_gap_by_stage?.q1?.avg_ms, 0)})`),
+      renderDetailRow('Teammate gap Q2 avg', 'teammate_gap_q2_avg', `${formatDeltaSeconds(qi.teammate_gap_by_stage?.q2?.avg_ms, 3, true)} (${formatMs(qi.teammate_gap_by_stage?.q2?.avg_ms, 0)})`),
+      renderDetailRow('Teammate gap Q3 avg', 'teammate_gap_q3_avg', `${formatDeltaSeconds(qi.teammate_gap_by_stage?.q3?.avg_ms, 3, true)} (${formatMs(qi.teammate_gap_by_stage?.q3?.avg_ms, 0)})`),
+      renderDetailRow('Teammate gap Q1 median', 'teammate_gap_q1_median', `${formatDeltaSeconds(qi.teammate_gap_by_stage?.q1?.median_ms, 3, true)} (${formatMs(qi.teammate_gap_by_stage?.q1?.median_ms, 0)})`),
+      renderDetailRow('Teammate gap Q2 median', 'teammate_gap_q2_median', `${formatDeltaSeconds(qi.teammate_gap_by_stage?.q2?.median_ms, 3, true)} (${formatMs(qi.teammate_gap_by_stage?.q2?.median_ms, 0)})`),
+      renderDetailRow('Teammate gap Q3 median', 'teammate_gap_q3_median', `${formatDeltaSeconds(qi.teammate_gap_by_stage?.q3?.median_ms, 3, true)} (${formatMs(qi.teammate_gap_by_stage?.q3?.median_ms, 0)})`)
+    ])
+  ].join('');
+
+  const raceDetails = [
+    renderDetailSection('Position Craft Detail', [
+      renderDetailRow('Pit-cycle position delta', 'pit_cycle_position_delta', formatSigned(ri.pit_cycle_position_delta, 2)),
+      renderDetailRow('Restart gain/loss', 'restart_gain_loss', formatSigned(ri.restart_gain_loss, 2)),
+      renderDetailRow('Recovery index', 'recovery_index', formatSigned(ri.recovery_index, 2)),
+      renderDetailRow('First-lap gain/loss', 'first_lap_gain_loss', formatSigned(ri.first_lap_gain_loss, 2))
+    ]),
+    renderDetailSection('Race Stability', [
+      renderDetailRow('Fastest lap count', 'fastest_lap_count', ri.fastest_lap_count ?? 0),
+      renderDetailRow('DNF rate', 'dnf_rate', formatPct(ri.dnf_rate, 1))
+    ])
+  ].join('');
+
+  const combinedDetails = [
+    renderDetailSection('Trend Detail', [
+      renderDetailRow('Quali trend slope', 'quali_trend_slope', formatSigned(qTrend.slope, 3)),
+      renderDetailRow('Quali trend series', 'quali_trend_series', formatSeries(qTrend.series || [])),
+      renderDetailRow('Race trend slope', 'race_trend_slope', formatSigned(rTrend.slope, 3)),
+      renderDetailRow('Race trend series', 'race_trend_series', formatSeries(rTrend.series || []))
+    ]),
+    renderDetailSection('Conversion Baseline', [
+      renderDetailRow('Quali→race delta', 'quali_race_delta', formatSigned(ci.quali_to_race_conversion?.avg_delta, 2)),
+      renderDetailRow('Quali teammate baseline', 'quali_teammate_baseline', `${formatDeltaSeconds(teammateQualiGapMs, 3, true)} (${formatMs(teammateQualiGapMs, 0)})`)
+    ])
+  ].join('');
 
   return `
     <article id="intel-driver-${driverToken}" class="intel-driver-card team-tone" style="${toneVars}" data-driver-id="${s.driverId}">
@@ -774,36 +907,37 @@ function buildDriverIntelCard(s) {
 
       <div class="intel-grid">
         <section class="intel-panel intel-panel-collapsible">
-          <h4>Qualifying Intelligence</h4>
+          <div class="intel-panel-head">
+            <h4>Quali Profile</h4>
+            <button class="btn ghost intel-expand-toggle" type="button" data-target="${qualMoreId}" aria-expanded="false">Expand details</button>
+          </div>
           <div class="intel-core-grid">
             ${renderMetricTile({
               driverId: s.driverId,
-              metricKey: 'q_best_delta',
-              rawValue: bestQualiGapMs,
-              displayValue: formatDeltaSeconds(bestQualiGapMs, 3, true),
+              metricKey: 'avg_quali_position',
+              rawValue: qi.avg_quali_position,
+              displayValue: formatNumber(qi.avg_quali_position, 2),
               better: 'lower',
-              label: 'Best Q Delta',
-              secondary: formatMs(bestQualiGapMs, 0),
-              status: computePaceStatus(bestQualiGapMs)
+              label: 'Avg Quali Position',
+              secondary: `Over ${sampleSize}`
             })}
             ${renderMetricTile({
               driverId: s.driverId,
-              metricKey: 'q_avg_delta',
-              rawValue: avgQualiGapMs,
-              displayValue: formatDeltaSeconds(avgQualiGapMs, 3, true),
+              metricKey: 'best_grid_position',
+              rawValue: qi.best_grid_position,
+              displayValue: qi.best_grid_position ?? '—',
               better: 'lower',
-              label: 'Avg Q Delta',
-              secondary: formatMs(avgQualiGapMs, 0),
-              status: computePaceStatus(avgQualiGapMs)
+              label: 'Best Grid Position',
+              secondary: `Worst ${qi.worst_grid_position ?? '—'}`
             })}
             ${renderMetricTile({
               driverId: s.driverId,
-              metricKey: 'q3_rate',
-              rawValue: q3Rate,
-              displayValue: formatPct(q3Rate, 1),
-              better: 'higher',
-              label: 'Q3 Rate',
-              secondary: `${qi.q3_appearances ?? 0} appearances`
+              metricKey: 'final_run_clutch_rank',
+              rawValue: qi.final_run_clutch_rank,
+              displayValue: formatNumber(qi.final_run_clutch_rank, 2),
+              better: 'lower',
+              label: 'Final-Run Clutch',
+              secondary: `${qComparedRounds} rounds sampled`
             })}
             ${renderMetricTile({
               driverId: s.driverId,
@@ -815,44 +949,77 @@ function buildDriverIntelCard(s) {
               secondary: `${qComparedRounds} rounds`,
               infoKey: 'head_to_head'
             })}
+            ${renderMetricTile({
+              driverId: s.driverId,
+              metricKey: 'q_avg_delta',
+              rawValue: avgQualiGapMs,
+              displayValue: formatDeltaSeconds(avgQualiGapMs, 3, true),
+              better: 'lower',
+              label: 'Teammate Quali Edge',
+              secondary: teammateEdgeSecondary,
+              status: computePaceStatus(avgQualiGapMs),
+              infoKey: 'teammate_qual_edge'
+            })}
+            ${renderMetricTile({
+              driverId: s.driverId,
+              metricKey: 'q3_rate',
+              rawValue: q3Rate,
+              displayValue: formatPct(q3Rate, 1),
+              better: 'higher',
+              label: 'Session Conversion',
+              secondary: sessionConversionSecondary,
+              infoKey: 'session_conversion'
+            })}
           </div>
-          <button class="btn ghost intel-expand-toggle" type="button" data-target="${qualMoreId}" aria-expanded="false">Expand</button>
           <div id="${qualMoreId}" class="intel-expand-content" hidden>
-            <dl>
-              <div><dt>${metricLabelHtml('Avg quali position', 'avg_quali_position', 'dl-label')}</dt><dd>${formatNumber(qi.avg_quali_position, 2)}</dd></div>
-              <div><dt>${metricLabelHtml('Best grid position', 'best_grid_position', 'dl-label')}</dt><dd>${qi.best_grid_position ?? '—'}</dd></div>
-              <div><dt>${metricLabelHtml('Final-run clutch rank', 'final_run_clutch_rank', 'dl-label')}</dt><dd>${formatNumber(qi.final_run_clutch_rank, 2)}</dd></div>
-              <div><dt>${metricLabelHtml('Q3 appearances', 'q3_appearances', 'dl-label')}</dt><dd>${qi.q3_appearances ?? 0}</dd></div>
-              <div><dt>${metricLabelHtml('Q2 appearances', 'q2_appearances', 'dl-label')}</dt><dd>${qi.q2_appearances ?? 0}</dd></div>
-              <div><dt>${metricLabelHtml('Q1 knockouts', 'q1_knockouts', 'dl-label')}</dt><dd>${qi.q1_knockouts ?? 0}</dd></div>
-              <div><dt>${metricLabelHtml('Pole count', 'pole_count', 'dl-label')}</dt><dd>${qi.pole_count ?? 0}</dd></div>
-              <div><dt>${metricLabelHtml('Worst grid position', 'worst_grid_position', 'dl-label')}</dt><dd>${qi.worst_grid_position ?? '—'}</dd></div>
-              <div><dt>${metricLabelHtml('Q2 survival rate', 'q2_survival_rate', 'dl-label')}</dt><dd>${formatPct(qi.stage_survival_rate?.q2, 1)}</dd></div>
-              <div><dt>${metricLabelHtml('Q3 survival rate', 'q3_survival_rate', 'dl-label')}</dt><dd>${formatPct(qi.stage_survival_rate?.q3, 1)}</dd></div>
-              <div><dt>${metricLabelHtml('Q1→Q2 delta', 'q1_q2_delta', 'dl-label')}</dt><dd>${formatDeltaSeconds(qi.q1_to_q2_improvement_ms, 3, true)} (${formatMs(qi.q1_to_q2_improvement_ms, 0)})</dd></div>
-              <div><dt>${metricLabelHtml('Q2→Q3 delta', 'q2_q3_delta', 'dl-label')}</dt><dd>${formatDeltaSeconds(qi.q2_to_q3_improvement_ms, 3, true)} (${formatMs(qi.q2_to_q3_improvement_ms, 0)})</dd></div>
-              <div><dt>${metricLabelHtml('Teammate gap Q1 avg', 'teammate_gap_q1_avg', 'dl-label')}</dt><dd>${formatDeltaSeconds(qi.teammate_gap_by_stage?.q1?.avg_ms, 3, true)} (${formatMs(qi.teammate_gap_by_stage?.q1?.avg_ms, 0)})</dd></div>
-              <div><dt>${metricLabelHtml('Teammate gap Q1 median', 'teammate_gap_q1_median', 'dl-label')}</dt><dd>${formatDeltaSeconds(qi.teammate_gap_by_stage?.q1?.median_ms, 3, true)} (${formatMs(qi.teammate_gap_by_stage?.q1?.median_ms, 0)})</dd></div>
-              <div><dt>${metricLabelHtml('Teammate gap Q2 avg', 'teammate_gap_q2_avg', 'dl-label')}</dt><dd>${formatDeltaSeconds(qi.teammate_gap_by_stage?.q2?.avg_ms, 3, true)} (${formatMs(qi.teammate_gap_by_stage?.q2?.avg_ms, 0)})</dd></div>
-              <div><dt>${metricLabelHtml('Teammate gap Q2 median', 'teammate_gap_q2_median', 'dl-label')}</dt><dd>${formatDeltaSeconds(qi.teammate_gap_by_stage?.q2?.median_ms, 3, true)} (${formatMs(qi.teammate_gap_by_stage?.q2?.median_ms, 0)})</dd></div>
-              <div><dt>${metricLabelHtml('Teammate gap Q3 avg', 'teammate_gap_q3_avg', 'dl-label')}</dt><dd>${formatDeltaSeconds(qi.teammate_gap_by_stage?.q3?.avg_ms, 3, true)} (${formatMs(qi.teammate_gap_by_stage?.q3?.avg_ms, 0)})</dd></div>
-              <div><dt>${metricLabelHtml('Teammate gap Q3 median', 'teammate_gap_q3_median', 'dl-label')}</dt><dd>${formatDeltaSeconds(qi.teammate_gap_by_stage?.q3?.median_ms, 3, true)} (${formatMs(qi.teammate_gap_by_stage?.q3?.median_ms, 0)})</dd></div>
-            </dl>
+            ${qualDetails}
           </div>
         </section>
 
         <section class="intel-panel intel-panel-collapsible">
-          <h4>Race Intelligence</h4>
+          <div class="intel-panel-head">
+            <h4>Race Profile</h4>
+            <button class="btn ghost intel-expand-toggle" type="button" data-target="${raceMoreId}" aria-expanded="false">Expand details</button>
+          </div>
           <div class="intel-core-grid intel-core-grid-race">
+            ${renderMetricTile({
+              driverId: s.driverId,
+              metricKey: 'avg_race_finish',
+              rawValue: ri.avg_race_finish,
+              displayValue: formatNumber(ri.avg_race_finish, 2),
+              better: 'lower',
+              label: 'Avg Race Finish',
+              secondary: `Across ${sampleSize}`
+            })}
+            ${renderMetricTile({
+              driverId: s.driverId,
+              metricKey: 'points_conversion_rate',
+              rawValue: ri.points_conversion_rate,
+              displayValue: formatPct(ri.points_conversion_rate, 1),
+              better: 'higher',
+              label: 'Points Conversion',
+              secondary: `DNF ${formatPct(ri.dnf_rate, 1)}`
+            })}
+            ${renderMetricTile({
+              driverId: s.driverId,
+              metricKey: 'r_teammate_gap',
+              rawValue: ri.teammate_race_pace_gap_ms,
+              displayValue: formatDeltaSeconds(ri.teammate_race_pace_gap_ms, 3, true),
+              better: 'lower',
+              label: 'Teammate Race Gap',
+              secondary: formatMs(ri.teammate_race_pace_gap_ms, 0),
+              status: computePaceStatus(ri.teammate_race_pace_gap_ms)
+            })}
             ${renderMetricTile({
               driverId: s.driverId,
               metricKey: 'r_pace_delta',
               rawValue: racePaceDeltaMs,
               displayValue: formatDeltaSeconds(racePaceDeltaMs, 3, false),
               better: 'lower',
-              label: 'Race Pace Delta',
-              secondary: racePaceDeltaMs === null ? 'No compound split yet' : `${formatMs(racePaceDeltaMs, 0)} stint spread`,
-              status: computeConsistencyStatus(racePaceDeltaMs)
+              label: 'Pace Package',
+              secondary: pacePackageSecondary,
+              status: computeConsistencyStatus(racePaceDeltaMs ?? ri.lap_pace_consistency_ms),
+              infoKey: 'pace_package'
             })}
             ${renderMetricTile({
               driverId: s.driverId,
@@ -870,39 +1037,23 @@ function buildDriverIntelCard(s) {
               rawValue: ri.positions_gained_lost,
               displayValue: formatSigned(ri.positions_gained_lost, 2),
               better: 'higher',
-              label: 'Net Positions',
-              secondary: `first lap ${formatSigned(ri.first_lap_gain_loss, 2)}`
-            })}
-            ${renderMetricTile({
-              driverId: s.driverId,
-              metricKey: 'r_teammate_gap',
-              rawValue: ri.teammate_race_pace_gap_ms,
-              displayValue: formatDeltaSeconds(ri.teammate_race_pace_gap_ms, 3, true),
-              better: 'lower',
-              label: 'Teammate Gap',
-              secondary: formatMs(ri.teammate_race_pace_gap_ms, 0),
-              status: computePaceStatus(ri.teammate_race_pace_gap_ms)
+              label: 'Position Craft',
+              secondary: positionCraftSecondary,
+              infoKey: 'position_craft'
             })}
           </div>
-          <button class="btn ghost intel-expand-toggle" type="button" data-target="${raceMoreId}" aria-expanded="false">Expand</button>
           <div id="${raceMoreId}" class="intel-expand-content" hidden>
-            <dl>
-              <div><dt>${metricLabelHtml('Points conversion', 'points_conversion_rate', 'dl-label')}</dt><dd>${formatPct(ri.points_conversion_rate, 1)}</dd></div>
-              <div><dt>${metricLabelHtml('Avg race finish', 'avg_race_finish', 'dl-label')}</dt><dd>${formatNumber(ri.avg_race_finish, 2)}</dd></div>
-              <div><dt>${metricLabelHtml('Pit-cycle position delta', 'pit_cycle_position_delta', 'dl-label')}</dt><dd>${formatSigned(ri.pit_cycle_position_delta, 2)}</dd></div>
-              <div><dt>${metricLabelHtml('Restart gain/loss', 'restart_gain_loss', 'dl-label')}</dt><dd>${formatSigned(ri.restart_gain_loss, 2)}</dd></div>
-              <div><dt>${metricLabelHtml('Recovery index', 'recovery_index', 'dl-label')}</dt><dd>${formatSigned(ri.recovery_index, 2)}</dd></div>
-              <div><dt>${metricLabelHtml('First-lap gain/loss', 'first_lap_gain_loss', 'dl-label')}</dt><dd>${formatSigned(ri.first_lap_gain_loss, 2)}</dd></div>
-              <div><dt>${metricLabelHtml('Fastest lap count', 'fastest_lap_count', 'dl-label')}</dt><dd>${ri.fastest_lap_count ?? 0}</dd></div>
-              <div><dt>${metricLabelHtml('DNF rate', 'dnf_rate', 'dl-label')}</dt><dd>${formatPct(ri.dnf_rate, 1)}</dd></div>
-            </dl>
+            ${raceDetails}
             <div class="intel-subtitle">${metricLabelHtml('Stint Pace by Compound', 'stint_pace_compound', 'subtitle-label')}</div>
             <div class="intel-stints">${stintHtml}</div>
           </div>
         </section>
 
         <section class="intel-panel intel-panel-collapsible">
-          <h4>Combined Intelligence</h4>
+          <div class="intel-panel-head">
+            <h4>Weekend Signal</h4>
+            <button class="btn ghost intel-expand-toggle" type="button" data-target="${combinedMoreId}" aria-expanded="false">Expand details</button>
+          </div>
           <div class="intel-core-grid intel-core-grid-combined">
             ${renderMetricTile({
               driverId: s.driverId,
@@ -911,7 +1062,7 @@ function buildDriverIntelCard(s) {
               displayValue: formatNumber(ci.weekend_score, 2),
               better: 'higher',
               label: 'Weekend Score',
-              secondary: `${qTrendLabel} / ${rTrendLabel}`
+              secondary: `${sampleSize} in model`
             })}
             ${renderMetricTile({
               driverId: s.driverId,
@@ -920,7 +1071,7 @@ function buildDriverIntelCard(s) {
               displayValue: formatSigned(ci.momentum_index, 3),
               better: 'higher',
               label: 'Momentum Index',
-              secondary: `Quali slope ${formatSigned(qTrend.slope, 3)}`
+              secondary: `Quali ${qTrendLabel} · Race ${rTrendLabel}`
             })}
             ${renderMetricTile({
               driverId: s.driverId,
@@ -929,29 +1080,42 @@ function buildDriverIntelCard(s) {
               displayValue: formatPct(ci.quali_to_race_conversion?.hit_rate, 1),
               better: 'higher',
               label: 'Q→R Hit Rate',
-              secondary: `Avg delta ${formatSigned(ci.quali_to_race_conversion?.avg_delta, 2)}`
+              secondary: qHitSecondary
             })}
             ${renderMetricTile({
               driverId: s.driverId,
-              metricKey: null,
-              rawValue: null,
-              displayValue: trendSnapshot,
+              metricKey: 'c_form_trend',
+              rawValue: -((Number(qTrend.slope) || 0) + (Number(rTrend.slope) || 0)),
+              displayValue: `${qTrendLabel} / ${rTrendLabel}`,
               better: 'higher',
-              label: 'Trend Snapshot',
-              secondary: `Quali ${qTrendLabel} · Race ${rTrendLabel}`,
-              infoKey: 'trend_snapshot'
+              label: 'Form Trend',
+              secondary: formTrendSecondary,
+              infoKey: 'form_trend'
+            })}
+            ${renderMetricTile({
+              driverId: s.driverId,
+              metricKey: 'c_risk_level',
+              rawValue: riskProfile.score,
+              displayValue: riskProfile.label,
+              better: 'lower',
+              label: 'Risk Level',
+              secondary: riskProfile.secondary,
+              status: { label: riskProfile.label, tone: riskProfile.tone },
+              infoKey: 'risk_level'
+            })}
+            ${renderMetricTile({
+              driverId: s.driverId,
+              metricKey: 'c_sample_size',
+              rawValue: Math.max(Number(s.sample?.race_starts || 0), Number(s.sample?.quali_starts || 0)),
+              displayValue: sampleSize,
+              better: 'higher',
+              label: 'Sample Size',
+              secondary: `R ${s.sample?.race_starts ?? 0} · Q ${s.sample?.quali_starts ?? 0}`,
+              infoKey: 'sample_size'
             })}
           </div>
-          <button class="btn ghost intel-expand-toggle" type="button" data-target="${combinedMoreId}" aria-expanded="false">Expand</button>
           <div id="${combinedMoreId}" class="intel-expand-content" hidden>
-            <dl>
-              <div><dt>${metricLabelHtml('Quali trend slope', 'quali_trend_slope', 'dl-label')}</dt><dd>${formatSigned(qTrend.slope, 3)}</dd></div>
-              <div><dt>${metricLabelHtml('Quali trend series', 'quali_trend_series', 'dl-label')}</dt><dd>${formatSeries(qTrend.series || [])}</dd></div>
-              <div><dt>${metricLabelHtml('Race trend slope', 'race_trend_slope', 'dl-label')}</dt><dd>${formatSigned(rTrend.slope, 3)}</dd></div>
-              <div><dt>${metricLabelHtml('Race trend series', 'race_trend_series', 'dl-label')}</dt><dd>${formatSeries(rTrend.series || [])}</dd></div>
-              <div><dt>${metricLabelHtml('Quali→race delta', 'quali_race_delta', 'dl-label')}</dt><dd>${formatSigned(ci.quali_to_race_conversion?.avg_delta, 2)}</dd></div>
-              <div><dt>${metricLabelHtml('Quali teammate baseline', 'quali_teammate_baseline', 'dl-label')}</dt><dd>${formatDeltaSeconds(teammateQualiGapMs, 3, true)} (${formatMs(teammateQualiGapMs, 0)})</dd></div>
-            </dl>
+            ${combinedDetails}
           </div>
         </section>
       </div>
