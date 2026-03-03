@@ -569,36 +569,51 @@ function perFieldBreakdownHtml(grade) {
     const hit = modeled ? percentLabel(row.hitProbability, 0) : '—';
     const max = Number.isFinite(Number(row.maxPoints)) ? Number(row.maxPoints) : 0;
     const kindClass = modeled ? 'modeled' : 'manual';
+    const group = row.group || 'Field';
+    const projected = row.projectedValue ?? '—';
+    const notes = row.notes ? `<p class="template-grade-breakdown-note">${escapeHtml(row.notes)}</p>` : '';
 
     return `
-      <tr class="${kindClass}">
-        <td>${escapeHtml(row.label || row.id || 'Field')}</td>
-        <td>${escapeHtml(row.pickLabel || '—')}</td>
-        <td>${escapeHtml(String(row.projectedValue ?? '—'))}</td>
-        <td>${hit}</td>
-        <td>${expected}</td>
-        <td>${max || '—'}</td>
-      </tr>
+      <article class="template-grade-breakdown-item ${kindClass}">
+        <div class="template-grade-breakdown-top">
+          <div>
+            <span class="eyebrow">${escapeHtml(group)}</span>
+            <strong>${escapeHtml(row.label || row.id || 'Field')}</strong>
+          </div>
+          <span class="chip">${modeled ? 'Modeled' : 'Manual'}</span>
+        </div>
+        <div class="template-grade-breakdown-grid">
+          <div class="template-grade-breakdown-cell">
+            <span>Pick</span>
+            <strong>${escapeHtml(row.pickLabel || '—')}</strong>
+          </div>
+          <div class="template-grade-breakdown-cell">
+            <span>Model View</span>
+            <strong>${escapeHtml(String(projected))}</strong>
+          </div>
+          <div class="template-grade-breakdown-cell">
+            <span>Hit Odds</span>
+            <strong>${hit}</strong>
+          </div>
+          <div class="template-grade-breakdown-cell">
+            <span>Exp Pts</span>
+            <strong>${expected}</strong>
+          </div>
+          <div class="template-grade-breakdown-cell">
+            <span>Max</span>
+            <strong>${max || '—'}</strong>
+          </div>
+        </div>
+        ${notes}
+      </article>
     `;
   }).join('');
 
   return `
     <details class="template-grade-breakdown">
       <summary>Per-field breakdown</summary>
-      <div class="table-wrap">
-        <table class="simple-table compact">
-          <thead>
-            <tr>
-              <th>Field</th>
-              <th>Pick</th>
-              <th>Model View</th>
-              <th>Hit Odds</th>
-              <th>Exp Pts</th>
-              <th>Max</th>
-            </tr>
-          </thead>
-          <tbody>${body}</tbody>
-        </table>
+      <div class="template-grade-breakdown-list">
+        ${body}
       </div>
     </details>
   `;

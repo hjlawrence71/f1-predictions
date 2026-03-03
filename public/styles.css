@@ -768,18 +768,20 @@ textarea:focus {
 
 .template-grade-callouts li {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
   align-items: baseline;
 }
 
 .template-grade-callouts li span {
   color: var(--ink);
+  line-height: 1.35;
 }
 
 .template-grade-callouts li strong {
   color: var(--text-muted);
   font-weight: 600;
+  overflow-wrap: anywhere;
 }
 
 .template-grade-callouts li em {
@@ -792,48 +794,91 @@ textarea:focus {
   border: 1px solid #dbe3ef;
   border-radius: 10px;
   background: linear-gradient(180deg, #ffffff, #f7faff);
-  padding: 8px 9px;
+  padding: 10px 11px;
 }
 
 .template-grade-breakdown > summary {
   cursor: pointer;
   list-style: none;
   font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .template-grade-breakdown > summary::-webkit-details-marker {
   display: none;
 }
 
-.template-grade-breakdown .table-wrap {
-  margin-top: 8px;
-  overflow: auto;
+.template-grade-breakdown-list {
+  margin-top: 10px;
+  display: grid;
+  gap: 10px;
 }
 
-.template-grade-breakdown table {
-  width: 100%;
-  border-collapse: collapse;
-  min-width: 620px;
+.template-grade-breakdown-item {
+  border: 1px solid #dde6f1;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.72);
+  padding: 10px;
+  display: grid;
+  gap: 10px;
 }
 
-.template-grade-breakdown th,
-.template-grade-breakdown td {
-  border-bottom: 1px solid #e2eaf4;
-  padding: 6px 8px;
-  text-align: left;
-  font-size: 12px;
-  vertical-align: top;
+.template-grade-breakdown-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
 }
 
-.template-grade-breakdown th {
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
+.template-grade-breakdown-top strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 14px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.template-grade-breakdown-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 8px;
+}
+
+.template-grade-breakdown-cell {
+  min-width: 0;
+  border: 1px solid #e2eaf4;
+  border-radius: 8px;
+  background: rgba(247, 250, 255, 0.88);
+  padding: 8px;
+  display: grid;
+  gap: 4px;
+}
+
+.template-grade-breakdown-cell span {
   font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
 }
 
-.template-grade-breakdown tr.manual td {
+.template-grade-breakdown-cell strong {
+  font-size: 13px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.template-grade-breakdown-note {
+  margin: 0;
   color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+:root .template-grade-breakdown-item.manual {
+  border-style: dashed;
 }
 
 :root .rulebook-list {
@@ -986,15 +1031,29 @@ textarea:focus {
   border-bottom-color: #2b3e59;
 }
 
+:root[data-theme='dark'] .template-grade-breakdown-item {
+  border-color: #2d3d56;
+  background: rgba(19, 29, 46, 0.74);
+}
+
+:root[data-theme='dark'] .template-grade-breakdown-cell {
+  border-color: #2d3d56;
+  background: rgba(11, 19, 31, 0.78);
+}
+
 :root[data-theme='dark'] .template-grade-callouts li span,
 :root[data-theme='dark'] .template-grade-callouts li em,
-:root[data-theme='dark'] .template-grade-metric > strong {
+:root[data-theme='dark'] .template-grade-metric > strong,
+:root[data-theme='dark'] .template-grade-breakdown-top strong,
+:root[data-theme='dark'] .template-grade-breakdown-cell strong {
   color: #f2f7ff;
 }
 
 :root[data-theme='dark'] .template-grade-callouts li strong,
 :root[data-theme='dark'] .template-grade-sub,
-:root[data-theme='dark'] .template-grade-metric > small {
+:root[data-theme='dark'] .template-grade-metric > small,
+:root[data-theme='dark'] .template-grade-breakdown-note,
+:root[data-theme='dark'] .template-grade-breakdown-cell span {
   color: #bfd0ea;
 }
 
