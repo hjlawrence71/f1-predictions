@@ -147,31 +147,79 @@ function lockFieldLabel(value) {
   return map[key] || key;
 }
 
-function renderUserRoundCard(userRow) {
+function pickChip(label, value, tone = '') {
+  const displayValue = value === null || value === undefined || value === '' ? '—' : value;
+  return `
+    <span class="round-pick-chip ${tone}">
+      <span class="round-pick-label">${label}</span>
+      <span class="round-pick-value">${displayValue}</span>
+    </span>
+  `;
+}
+
+function yesNoChip(label, value) {
+  const normalized = yesNoLabel(value);
+  const tone = normalized === 'Yes' ? 'is-yes' : normalized === 'No' ? 'is-no' : '';
+  return pickChip(label, normalized, tone);
+}
+
+function renderUserRoundCard(userRow, nameMap) {
   if (userRow.missing) {
     return `
-      <div class="round-user">
-        <strong>${userRow.user}</strong>
-        <div class="muted">No picks yet.</div>
+      <div class="round-user round-user-empty">
+        <div class="round-user-head">
+          <strong>${userRow.user}</strong>
+          <span class="chip">Waiting</span>
+        </div>
+        <div class="muted">No picks saved yet.</div>
       </div>
     `;
   }
 
+  const picks = userRow.picks || {};
+  const sideBets = picks.sideBets || {};
+  const points = userRow.points || {};
+  const topLine = [
+    pickChip('P1', driverName(nameMap, picks.p1)),
+    pickChip('P2', driverName(nameMap, picks.p2)),
+    pickChip('P3', driverName(nameMap, picks.p3))
+  ].join('');
+  const supportLine = [
+    pickChip('Pole', driverName(nameMap, picks.pole)),
+    pickChip('FL', driverName(nameMap, picks.fastestLap)),
+    pickChip('Lock', lockFieldLabel(userRow.lock)),
+    pickChip('Wildcard', picks.wildcardText || '—')
+  ].join('');
+  const sideBetLine = [
+    yesNoChip('Pole converts', sideBets.poleConverts),
+    yesNoChip('Front row winner', sideBets.frontRowWinner),
+    yesNoChip('Any DNF', sideBets.anyDnf),
+    yesNoChip('Red flag', sideBets.redFlag),
+    yesNoChip('Big mover', sideBets.bigMover),
+    yesNoChip('Other 7 podium', sideBets.other7Podium)
+  ].join('');
+
   return `
     <div class="round-user">
-      <div style="display:flex;justify-content:space-between;align-items:center;">
+      <div class="round-user-head">
         <strong>${userRow.user}</strong>
-        <span class="chip ${userRow.points.total > 0 ? 'dark' : ''}">${userRow.points.total} pts</span>
+        <span class="chip ${points.total > 0 ? 'dark' : ''}">${points.total} pts</span>
       </div>
-      <div class="muted">P1 ${userRow.points.p1} · P2 ${userRow.points.p2} · P3 ${userRow.points.p3} · Pole ${userRow.points.pole} · FL ${userRow.points.fastestLap} · Lock ${userRow.points.lock}</div>
-      <div class="muted">Side bets ${userRow.points.sideBets || 0} pts (Stable ${userRow.points.sideBetStable || 0} · Chaos ${userRow.points.sideBetChaos || 0})</div>
-      <div style="display:flex;gap:6px;margin:8px 0;flex-wrap:wrap;">
-        <span class="chip ${userRow.podium_exact ? 'red' : ''}">Podium exact</span>
+      <div class="round-user-metrics">
+        <span>Picks ${points.p1} · ${points.p2} · ${points.p3} · Pole ${points.pole} · FL ${points.fastestLap}</span>
+        <span>Side bets ${points.sideBets || 0} pts · Stable ${points.sideBetStable || 0} · Chaos ${points.sideBetChaos || 0}</span>
+      </div>
+      <div class="round-pick-strip">${topLine}</div>
+      <div class="round-pick-strip round-pick-strip-secondary">${supportLine}</div>
+      <div class="round-user-flags">
         <span class="chip">${(userRow.accuracy * 100).toFixed(1)}% accuracy</span>
-        <span class="chip">Lock: ${lockFieldLabel(userRow.lock)}</span>
+        <span class="chip ${userRow.podium_exact ? 'red' : ''}">${userRow.podium_exact ? 'Podium exact' : 'No podium exact'}</span>
+        <span class="chip">Lock bonus ${points.lock || 0}</span>
       </div>
-      <div class="muted">Wildcard: ${userRow.picks.wildcardText || '—'}</div>
-      <div class="muted">Y/N picks: Pole converts ${yesNoLabel(userRow.picks?.sideBets?.poleConverts)} · Front row winner ${yesNoLabel(userRow.picks?.sideBets?.frontRowWinner)} · Any DNF ${yesNoLabel(userRow.picks?.sideBets?.anyDnf)} · Red flag ${yesNoLabel(userRow.picks?.sideBets?.redFlag)} · Big mover ${yesNoLabel(userRow.picks?.sideBets?.bigMover)} · Other 7 podium ${yesNoLabel(userRow.picks?.sideBets?.other7Podium)}</div>
+      <div class="round-sidebets-block">
+        <div class="round-section-label">Y/N picks</div>
+        <div class="round-pick-strip round-pick-strip-secondary">${sideBetLine}</div>
+      </div>
     </div>
   `;
 }
@@ -184,9 +232,16 @@ function renderRoundDetails(roundData, nameMap) {
   const actualQuali = actual.pole ? driverName(nameMap, actual.pole) : 'No pole data yet';
   const actualFastest = actual.fastestLap ? driverName(nameMap, actual.fastestLap) : 'No fastest lap data yet';
   const actualSide = actual.sideBets || {};
-  const actualSideSummary = `Pole converts ${yesNoLabel(actualSide.poleConverts)} · Front row winner ${yesNoLabel(actualSide.frontRowWinner)} · Any DNF ${yesNoLabel(actualSide.anyDnf)} · Red flag ${yesNoLabel(actualSide.redFlag)} · Big mover ${yesNoLabel(actualSide.bigMover)} · Other 7 podium ${yesNoLabel(actualSide.other7Podium)}`;
+  const actualSideSummary = [
+    yesNoChip('Pole converts', actualSide.poleConverts),
+    yesNoChip('Front row winner', actualSide.frontRowWinner),
+    yesNoChip('Any DNF', actualSide.anyDnf),
+    yesNoChip('Red flag', actualSide.redFlag),
+    yesNoChip('Big mover', actualSide.bigMover),
+    yesNoChip('Other 7 podium', actualSide.other7Podium)
+  ].join('');
 
-  const usersHtml = roundData.users.map(renderUserRoundCard).join('');
+  const usersHtml = roundData.users.map((row) => renderUserRoundCard(row, nameMap)).join('');
 
   return `
     <div class="round-card round-focus-card">
@@ -201,10 +256,24 @@ function renderRoundDetails(roundData, nameMap) {
         </div>
       </header>
       <div class="round-actuals">
-        <div><strong>Actual podium:</strong> ${actualPodium}</div>
-        <div><strong>Pole:</strong> ${actualQuali}</div>
-        <div><strong>Fastest lap:</strong> ${actualFastest}</div>
-        <div><strong>Y/N outcomes:</strong> ${actualSideSummary}</div>
+        <div class="round-actuals-grid">
+          <div class="round-actual-item">
+            <span class="round-section-label">Actual podium</span>
+            <strong>${actualPodium}</strong>
+          </div>
+          <div class="round-actual-item">
+            <span class="round-section-label">Pole</span>
+            <strong>${actualQuali}</strong>
+          </div>
+          <div class="round-actual-item">
+            <span class="round-section-label">Fastest lap</span>
+            <strong>${actualFastest}</strong>
+          </div>
+        </div>
+        <div class="round-sidebets-block">
+          <div class="round-section-label">Y/N outcomes</div>
+          <div class="round-pick-strip round-pick-strip-secondary">${actualSideSummary}</div>
+        </div>
       </div>
       <div class="round-users">
         ${usersHtml}
