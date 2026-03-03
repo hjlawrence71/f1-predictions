@@ -1,6 +1,7 @@
 const THEME_STORAGE_KEY = 'f1-theme';
 const NAV_STYLE_STORAGE_KEY = 'f1-nav-style';
 const NAV_STYLES = ['pills', 'underline', 'segmented'];
+const FIXED_NAV_STYLE = 'underline';
 const root = document.documentElement;
 
 function getPreferredTheme() {
@@ -10,9 +11,7 @@ function getPreferredTheme() {
 }
 
 function getPreferredNavStyle() {
-  const saved = localStorage.getItem(NAV_STYLE_STORAGE_KEY);
-  if (NAV_STYLES.includes(saved)) return saved;
-  return 'pills';
+  return FIXED_NAV_STYLE;
 }
 
 function applyTheme(theme) {
@@ -20,7 +19,7 @@ function applyTheme(theme) {
 }
 
 function applyNavStyle(style) {
-  const resolved = NAV_STYLES.includes(style) ? style : 'pills';
+  const resolved = NAV_STYLES.includes(style) ? style : FIXED_NAV_STYLE;
   root.setAttribute('data-nav-style', resolved);
 }
 
@@ -42,41 +41,9 @@ function syncNavStyleButtons(group) {
 }
 
 function buildNavStylePicker() {
-  const host = document.querySelector('.app-header .header-actions');
-  if (!host) return null;
-
-  let group = host.querySelector('.nav-style-switch');
-  if (group) return group;
-
-  group = document.createElement('div');
-  group.className = 'nav-style-switch';
-  group.setAttribute('role', 'group');
-  group.setAttribute('aria-label', 'Navigation style');
-
-  const styles = [
-    { key: 'pills', label: 'A', title: 'Pill tabs' },
-    { key: 'underline', label: 'B', title: 'Underline tabs' },
-    { key: 'segmented', label: 'C', title: 'Segmented tabs' }
-  ];
-
-  for (const item of styles) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'nav-style-btn';
-    btn.dataset.navStyle = item.key;
-    btn.textContent = item.label;
-    btn.title = item.title;
-    btn.setAttribute('aria-pressed', 'false');
-    btn.addEventListener('click', () => {
-      applyNavStyle(item.key);
-      localStorage.setItem(NAV_STYLE_STORAGE_KEY, item.key);
-      syncNavStyleButtons(group);
-    });
-    group.appendChild(btn);
-  }
-
-  host.appendChild(group);
-  return group;
+  const existing = document.querySelector('.app-header .header-actions .nav-style-switch');
+  if (existing) existing.remove();
+  return null;
 }
 
 function wireToggle() {
@@ -94,8 +61,8 @@ function wireToggle() {
 }
 
 function wireNavStylePicker() {
-  const group = buildNavStylePicker();
-  syncNavStyleButtons(group);
+  localStorage.setItem(NAV_STYLE_STORAGE_KEY, FIXED_NAV_STYLE);
+  buildNavStylePicker();
 }
 
 applyTheme(getPreferredTheme());
