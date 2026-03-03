@@ -4062,21 +4062,38 @@ function resolveChampionshipProjectionRound(data, season, now = new Date()) {
     };
   }
 
+  const today = dateYmdInTimeZone(now, PICKS_LOCK_TIME_ZONE);
+  const scheduleByRound = new Map(schedule.map((row) => [toInt(row.round), row]));
   const maxCompletedRound = Math.max(
     0,
     ...(data.race_actuals || [])
       .filter((row) => row.season === season)
+      .filter((row) => {
+        const round = toInt(row.round);
+        const scheduled = scheduleByRound.get(round);
+        if (!scheduled) return false;
+        const endDate = scheduled.end_date || scheduled.start_date || '';
+        return !endDate || String(endDate) <= today;
+      })
       .map((row) => toInt(row.round) || 0),
     ...(data.race_results || [])
       .filter((row) => row.season === season)
+      .filter((row) => {
+        const round = toInt(row.round);
+        const scheduled = scheduleByRound.get(round);
+        if (!scheduled) return false;
+        const endDate = scheduled.end_date || scheduled.start_date || '';
+        return !endDate || String(endDate) <= today;
+      })
       .map((row) => toInt(row.round) || 0)
   );
 
   const lastScheduledRound = schedule[schedule.length - 1].round;
-  const today = dateYmdInTimeZone(now, PICKS_LOCK_TIME_ZONE);
 
   if (maxCompletedRound > 0) {
-    const nextRound = Math.min(lastScheduledRound + 1, maxCompletedRound + 1);
+    const nextRound = maxCompletedRound >= lastScheduledRound
+      ? lastScheduledRound
+      : Math.min(lastScheduledRound, maxCompletedRound + 1);
     return {
       season,
       round: nextRound,
