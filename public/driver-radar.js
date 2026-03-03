@@ -6,6 +6,7 @@ const statsViewSelect = document.getElementById('statsViewSelect');
 const roundSelect = document.getElementById('roundSelect');
 const roundLabel = document.getElementById('roundLabel');
 const syncOpenF1Btn = document.getElementById('syncOpenF1Btn');
+const runRehearsalBtn = document.getElementById('runRehearsalBtn');
 const openF1SyncStatus = document.getElementById('openF1SyncStatus');
 const statsHighlights = document.getElementById('statsHighlights');
 const statsTable = document.getElementById('statsTable');
@@ -18,6 +19,21 @@ let latestStats = [];
 let activeTeamKey = 'McLaren';
 let activeDriverId = null;
 let compareDriverId = null;
+
+const REHEARSAL_IMPORT_PAYLOAD = {
+  qualifying: {
+    pole: 'Lando Norris',
+    order: ['Oscar Piastri', 'Charles Leclerc', 'George Russell']
+  },
+  race: {
+    p1: 'Oscar Piastri',
+    p2: 'Lando Norris',
+    p3: 'Charles Leclerc',
+    fastestLap: 'George Russell',
+    dnfs: ['Lance Stroll'],
+    redFlag: true
+  }
+};
 
 const TEAM_ORDER_BY_SEASON = {
   2025: [
@@ -144,6 +160,14 @@ const DRIVER_NUMBERS_BY_NAME = new Map([
 
 function activeSeason() {
   return Number(seasonSelect?.value || 2026);
+}
+
+function updateRehearsalButtonState() {
+  if (!runRehearsalBtn) return;
+  const currentSeason = new Date().getFullYear();
+  const enabled = activeSeason() === currentSeason;
+  runRehearsalBtn.disabled = !enabled;
+  runRehearsalBtn.title = enabled ? '' : `Rehearsal import is only enabled for ${currentSeason}.`;
 }
 
 function activeStatsView() {
@@ -1429,8 +1453,79 @@ async function syncOpenF1Round() {
   }
 }
 
+async function runRehearsalImportWithChecks() {
+  if (!roundSelect || !runRehearsalBtn) return;
+
+  const season = Number(seasonSelect.value || 2026);
+  const round = Number(roundSelect.value || 0);
+  if (!round) {
+    if (openF1SyncStatus) openF1SyncStatus.textContent = 'Select a round first.';
+    return;
+  }
+
+  const user = String(window.prompt('Run rehearsal as which user?', 'Harrison') || '').trim();
+  if (!user) return;
+
+  const pin = String(window.prompt(`Enter ${user}'s PIN to run the rehearsal import.`) || '').trim();
+  if (!pin) return;
+
+  runRehearsalBtn.disabled = true;
+  runRehearsalBtn.textContent = 'Importing...';
+  if (openF1SyncStatus) openF1SyncStatus.textContent = 'Rehearsal import in progress...';
+
+  try {
+    const result = await fetchJson('/api/admin/rehearsal/import-round', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        user,
+        pin,
+        season,
+        round,
+        phase: 'full',
+        payload: REHEARSAL_IMPORT_PAYLOAD
+      })
+    }, 0);
+
+    const [health, weeklyStats, predictions] = await Promise.all([
+      fetchJson(`/api/admin/health-check?season=${season}`, {}, 0),
+      fetchJson(`/api/weekly/stats?season=${season}`, {}, 0),
+      fetchJson(`/api/predictions?season=${season}&round=${round}`, {}, 0)
+    ]);
+
+    const roundStats = Array.isArray(weeklyStats?.perRound)
+      ? weeklyStats.perRound.find((entry) => Number(entry.round) === round)
+      : null;
+    const picksSaved = Array.isArray(predictions) ? predictions.length : 0;
+    const scoredUsers = Array.isArray(roundStats?.users)
+      ? roundStats.users.filter((entry) => !entry.missing).length
+      : 0;
+    const actualsReady = Boolean(roundStats?.actuals?.p1 && roundStats?.actuals?.pole);
+    const checks = [
+      health?.ok ? 'health OK' : `health ${health?.counts?.fail || 0} fail`,
+      `${picksSaved} pick${picksSaved === 1 ? '' : 's'} loaded`,
+      actualsReady ? 'actuals built' : 'actuals missing',
+      `${scoredUsers} user${scoredUsers === 1 ? '' : 's'} scored`
+    ];
+
+    if (openF1SyncStatus) {
+      openF1SyncStatus.textContent =
+        `Rehearsal imported for ${result.raceName || `R${round}`}. Checks: ${checks.join(' · ')}.`;
+    }
+
+    await loadStats();
+  } catch (err) {
+    if (openF1SyncStatus) openF1SyncStatus.textContent = `Rehearsal failed: ${err.message}`;
+    alert(err.message);
+  } finally {
+    updateRehearsalButtonState();
+    runRehearsalBtn.textContent = 'Import rehearsal + checks';
+  }
+}
+
 async function handleSeasonChange() {
   await loadRounds();
+  updateRehearsalButtonState();
   await loadStats();
 }
 
@@ -1444,6 +1539,7 @@ if (statsViewSelect) {
 }
 if (roundSelect) roundSelect.addEventListener('change', renderRoundLabel);
 if (syncOpenF1Btn) syncOpenF1Btn.addEventListener('click', syncOpenF1Round);
+if (runRehearsalBtn) runRehearsalBtn.addEventListener('click', runRehearsalImportWithChecks);
 
 (async function init() {
   bindMetricHelpTooltips(document);
@@ -1455,5 +1551,6 @@ if (syncOpenF1Btn) syncOpenF1Btn.addEventListener('click', syncOpenF1Round);
 
   await loadSeasons();
   await loadRounds();
+  updateRehearsalButtonState();
   await loadStats();
 })();
