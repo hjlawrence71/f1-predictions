@@ -14,6 +14,11 @@ const METRIC_HELP = {
     formula: 'Consecutive rounds from latest backward with points > 0.',
     better: 'Higher is better.'
   },
+  streaks: {
+    description: 'Season streak view that combines best run and current active run.',
+    formula: 'Best streak = longest consecutive scoring run; current streak = current active scoring run.',
+    better: 'Higher is better.'
+  },
   lock_hit_rate: {
     description: 'How often lock picks converted into lock bonus points.',
     formula: 'Lock hits / lock attempts.',
@@ -60,13 +65,13 @@ const METRIC_HELP = {
     better: 'Higher is better.'
   },
   accuracy_rate: {
-    description: 'Pick scoring accuracy using the current scoring model.',
-    formula: 'Correct scoring contribution / attempted pick categories.',
+    description: 'Full-card hit rate across resolved weekly picks.',
+    formula: 'Correct core picks + resolved wildcard + resolved side bets, divided by total resolved attempts.',
     better: 'Higher is better.'
   },
   correct_attempted: {
-    description: 'Raw scoring contribution versus opportunities.',
-    formula: 'Correct scoring contribution and attempted categories.',
+    description: 'Raw hit count across the full weekly card.',
+    formula: 'Correct resolved picks versus total resolved attempts, including side bets and wildcard when scored.',
     better: 'Higher correct with same attempts is better.'
   },
   last3_avg_points: {

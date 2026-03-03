@@ -206,21 +206,64 @@ function renderTrendCards(weeklyStats, accuracyRows, timeline) {
           </div>
         </header>
 
-        <div class="trend-stats">
-          <div class="trend-stat">${metricLabelHtml('Avg pts/round', 'avg_points_round')}<strong>${fixed(row.avg)}</strong></div>
-          <div class="trend-stat">${metricLabelHtml('Best streak', 'best_streak')}<strong>${row.bestStreak}</strong></div>
-          <div class="trend-stat">${metricLabelHtml('Current streak', 'current_streak')}<strong>${row.currentStreak}</strong></div>
-          <div class="trend-stat">${metricLabelHtml('Lock hit rate', 'lock_hit_rate')}<strong>${pct(row.lockRate)}</strong></div>
-          <div class="trend-stat">${metricLabelHtml('Side bet pts', 'side_bet_points')}<strong>${row.sideBetPoints || 0}</strong></div>
-          <div class="trend-stat">${metricLabelHtml('Stable / Chaos', 'side_bet_split')}<strong>${row.sideBetStablePoints || 0} / ${row.sideBetChaosPoints || 0}</strong></div>
-          <div class="trend-stat">${metricLabelHtml('Side bet hit rate', 'side_bet_hit_rate')}<strong>${pct(row.sideBetHitRate)}</strong></div>
-          <div class="trend-stat">${metricLabelHtml('Side bet attempts', 'side_bet_attempts')}<strong>${row.sideBetAttempts || 0}</strong></div>
-          <div class="trend-stat">${metricLabelHtml('Consistency', 'consistency')}<strong>${fixed(row.consistency)}</strong></div>
-          <div class="trend-stat">${metricLabelHtml('Clutch', 'clutch')}<strong>${fixed(row.clutch)}</strong></div>
-          <div class="trend-stat">${metricLabelHtml('Accuracy', 'accuracy_rate')}<strong>${pct(accuracy.accuracy)}</strong></div>
-          <div class="trend-stat">${metricLabelHtml('Correct / Attempted', 'correct_attempted')}<strong>${accuracy.correct} / ${accuracy.attempted}</strong></div>
-          <div class="trend-stat">${metricLabelHtml('Last 3 avg', 'last3_avg_points')}<strong>${fixed(m.last3Avg, 1)} pts</strong></div>
-          <div class="trend-stat">${metricLabelHtml('Trend delta', 'trend_delta')}<strong class="momentum ${momentumClass(m.delta)}">${m.delta >= 0 ? '+' : ''}${fixed(m.delta, 1)}</strong></div>
+        <div class="trend-summary-grid">
+          <div class="trend-summary-pill">
+            ${metricLabelHtml('Accuracy', 'accuracy_rate')}
+            <strong>${pct(accuracy.accuracy)}</strong>
+          </div>
+          <div class="trend-summary-pill">
+            ${metricLabelHtml('Correct / Attempted', 'correct_attempted')}
+            <strong>${accuracy.correct} / ${accuracy.attempted}</strong>
+          </div>
+          <div class="trend-summary-pill">
+            ${metricLabelHtml('Lock hit rate', 'lock_hit_rate')}
+            <strong>${pct(row.lockRate)}</strong>
+          </div>
+          <div class="trend-summary-pill">
+            ${metricLabelHtml('Side bet hit rate', 'side_bet_hit_rate')}
+            <strong>${pct(row.sideBetHitRate)}</strong>
+          </div>
+        </div>
+
+        <div class="trend-groups">
+          <section class="trend-group">
+            <div class="trend-group-head">
+              <h4>Momentum</h4>
+              <span class="chip ${momentumClass(m.delta)}">${momentumLabel(m.delta)}</span>
+            </div>
+            <div class="trend-group-grid">
+              <div class="trend-stat">${metricLabelHtml('Avg pts/round', 'avg_points_round')}<strong>${fixed(row.avg)}</strong></div>
+              <div class="trend-stat">${metricLabelHtml('Last 3 avg', 'last3_avg_points')}<strong>${fixed(m.last3Avg, 1)} pts</strong></div>
+              <div class="trend-stat">${metricLabelHtml('Trend delta', 'trend_delta')}<strong class="momentum ${momentumClass(m.delta)}">${m.delta >= 0 ? '+' : ''}${fixed(m.delta, 1)}</strong></div>
+              <div class="trend-stat">
+                ${metricLabelHtml('Streaks', 'streaks')}
+                <strong>Best ${row.bestStreak} · Current ${row.currentStreak}</strong>
+              </div>
+            </div>
+          </section>
+
+          <section class="trend-group">
+            <div class="trend-group-head">
+              <h4>Performance Profile</h4>
+              <span class="chip">Core + side bets</span>
+            </div>
+            <div class="trend-group-grid">
+              <div class="trend-stat">${metricLabelHtml('Consistency', 'consistency')}<strong>${fixed(row.consistency)}</strong></div>
+              <div class="trend-stat">${metricLabelHtml('Clutch', 'clutch')}<strong>${fixed(row.clutch)}</strong></div>
+            </div>
+          </section>
+
+          <section class="trend-group">
+            <div class="trend-group-head">
+              <h4>Side Bets</h4>
+              <span class="chip">${row.sideBetPoints || 0} pts</span>
+            </div>
+            <div class="trend-group-grid">
+              <div class="trend-stat">${metricLabelHtml('Side bet pts', 'side_bet_points')}<strong>${row.sideBetPoints || 0}</strong></div>
+              <div class="trend-stat">${metricLabelHtml('Stable / Chaos', 'side_bet_split')}<strong>${row.sideBetStablePoints || 0} / ${row.sideBetChaosPoints || 0}</strong></div>
+              <div class="trend-stat">${metricLabelHtml('Side bet attempts', 'side_bet_attempts')}<strong>${row.sideBetAttempts || 0}</strong></div>
+            </div>
+          </section>
         </div>
       </article>
     `;

@@ -206,7 +206,7 @@ function renderUserRoundCard(userRow, nameMap) {
         <span class="chip ${points.total > 0 ? 'dark' : ''}">${points.total} pts</span>
       </div>
       <div class="round-user-metrics">
-        <span>Picks ${points.p1} · ${points.p2} · ${points.p3} · Pole ${points.pole} · FL ${points.fastestLap}</span>
+        <span>Picks ${points.p1} · ${points.p2} · ${points.p3} · Pole ${points.pole} · FL ${points.fastestLap} · WC ${points.wildcard || 0}</span>
         <span>Side bets ${points.sideBets || 0} pts · Stable ${points.sideBetStable || 0} · Chaos ${points.sideBetChaos || 0}</span>
       </div>
       <div class="round-pick-strip">${topLine}</div>
@@ -215,6 +215,9 @@ function renderUserRoundCard(userRow, nameMap) {
         <span class="chip">${(userRow.accuracy * 100).toFixed(1)}% accuracy</span>
         <span class="chip ${userRow.podium_exact ? 'red' : ''}">${userRow.podium_exact ? 'Podium exact' : 'No podium exact'}</span>
         <span class="chip">Lock bonus ${points.lock || 0}</span>
+        <span class="chip ${userRow.wildcardResult === true ? 'dark' : userRow.wildcardResult === false ? 'red' : ''}">${
+          userRow.wildcardResult === true ? 'Wildcard hit' : userRow.wildcardResult === false ? 'Wildcard miss' : 'Wildcard pending'
+        }</span>
       </div>
       <div class="round-sidebets-block">
         <div class="round-section-label">Y/N picks</div>

@@ -589,6 +589,9 @@ function loadDb() {
 
   for (const pred of data.predictions || []) {
     if (!('wildcard_text' in pred)) pred.wildcard_text = '';
+    if (!('wildcard_result' in pred)) pred.wildcard_result = null;
+    if (!('wildcard_scored_by' in pred)) pred.wildcard_scored_by = null;
+    if (!('wildcard_scored_at' in pred)) pred.wildcard_scored_at = null;
     if (!('lock_field' in pred)) pred.lock_field = null;
     if (!('score_lock' in pred)) pred.score_lock = 0;
     if (!('podium_exact' in pred)) pred.podium_exact = 0;
@@ -606,6 +609,7 @@ function loadDb() {
     pred.sidebet_red_flag = toBoolNullable(pred.sidebet_red_flag);
     pred.sidebet_big_mover = toBoolNullable(pred.sidebet_big_mover);
     pred.sidebet_other7_podium = toBoolNullable(pred.sidebet_other7_podium);
+    pred.wildcard_result = toBoolNullable(pred.wildcard_result);
 
     if (!('score_sidebet_pole_converts' in pred)) pred.score_sidebet_pole_converts = 0;
     if (!('score_sidebet_front_row_winner' in pred)) pred.score_sidebet_front_row_winner = 0;
@@ -1642,6 +1646,67 @@ function scoreSideBetPick(pickValue, actualValue, points) {
   if (pickValue === null || pickValue === undefined) return 0;
   if (actualValue === null || actualValue === undefined) return 0;
   return pickValue === actualValue ? points : 0;
+}
+
+function resolveWildcardHit(pred, data, wildcardRule = loadConfig().wildcardRule) {
+  const manual = toBoolNullable(pred?.wildcard_result);
+  if (manual !== null) return manual;
+
+  if (!pred?.wildcard_driver_id || wildcardRule !== 'top10') return null;
+
+  const raceRows = (data.race_results || []).filter(
+    (row) => row.season === pred.season && row.round === pred.round
+  );
+  if (!raceRows.length) return null;
+
+  return raceRows.some(
+    (row) =>
+      row.driverId === pred.wildcard_driver_id &&
+      row.position !== null &&
+      row.position <= 10
+  );
+}
+
+function predictionAccuracySummary(pred, actual, sideBetActuals, data, wildcardRule = loadConfig().wildcardRule) {
+  let correct = 0;
+  let attempted = 0;
+
+  const pickPairs = [
+    ['p1_driver_id', actual?.p1_driver_id],
+    ['p2_driver_id', actual?.p2_driver_id],
+    ['p3_driver_id', actual?.p3_driver_id],
+    ['pole_driver_id', actual?.pole_driver_id],
+    ['fastest_lap_driver_id', actual?.fastest_lap_driver_id]
+  ];
+
+  for (const [pickField, actualId] of pickPairs) {
+    if (!pred?.[pickField] || !actualId) continue;
+    attempted += 1;
+    if (pred[pickField] === actualId) correct += 1;
+  }
+
+  const wildcardAttempted = Boolean(pred?.wildcard_text || pred?.wildcard_driver_id);
+  const wildcardHit = wildcardAttempted ? resolveWildcardHit(pred, data, wildcardRule) : null;
+  if (wildcardAttempted && wildcardHit !== null) {
+    attempted += 1;
+    if (wildcardHit) correct += 1;
+  }
+
+  for (const sideBetKey of SIDE_BET_KEYS) {
+    const def = SIDE_BET_DEFS[sideBetKey];
+    const pickValue = toBoolNullable(pred?.[def.pickField]);
+    const actualValue = toBoolNullable(sideBetActuals?.[sideBetKey]);
+    if (pickValue === null || actualValue === null) continue;
+    attempted += 1;
+    if (pickValue === actualValue) correct += 1;
+  }
+
+  return {
+    correct,
+    attempted,
+    accuracy: attempted ? correct / attempted : 0,
+    wildcardHit
+  };
 }
 
 function describeTrend(slopeValue, lowerIsBetter = false) {
@@ -6260,18 +6325,8 @@ function updateAllPredictionScores(data) {
       score_p3 = 2;
     }
 
-    let score_wildcard = 0;
-    if (pred.wildcard_driver_id && wildcardRule === 'top10') {
-      const hit = data.race_results.find(
-        rr =>
-          rr.season === pred.season &&
-          rr.round === pred.round &&
-          rr.driverId === pred.wildcard_driver_id &&
-          rr.position !== null &&
-          rr.position <= 10
-      );
-      score_wildcard = hit ? 1 : 0;
-    }
+    const wildcardHit = resolveWildcardHit(pred, data, wildcardRule);
+    const score_wildcard = wildcardHit === true ? 1 : 0;
 
     let score_lock = 0;
 
@@ -7031,6 +7086,11 @@ app.post('/api/predictions', (req, res) => {
     data.predictions.push(pred);
   }
 
+  const previousWildcardSignature = JSON.stringify({
+    driverId: pred.wildcard_driver_id || null,
+    text: String(pred.wildcard_text || '').trim()
+  });
+
   pred.p1_driver_id = picks.p1 || null;
   pred.p2_driver_id = picks.p2 || null;
   pred.p3_driver_id = picks.p3 || null;
@@ -7048,12 +7108,75 @@ app.post('/api/predictions', (req, res) => {
   pred.sidebet_big_mover = toBoolNullable(sideBets.bigMover);
   pred.sidebet_other7_podium = toBoolNullable(sideBets.other7Podium);
 
+  const nextWildcardSignature = JSON.stringify({
+    driverId: pred.wildcard_driver_id || null,
+    text: String(pred.wildcard_text || '').trim()
+  });
+  if (previousWildcardSignature !== nextWildcardSignature) {
+    pred.wildcard_result = null;
+    pred.wildcard_scored_by = null;
+    pred.wildcard_scored_at = null;
+  }
+
   pred.updated_at = now;
 
   updateAllPredictionScores(data);
   saveDb(data);
   const postWriteSnapshot = createPostWriteSnapshot(`post-weekly-r${round}-${user}`);
   res.json({ ok: true, preWriteSnapshot, postWriteSnapshot });
+});
+
+app.post('/api/predictions/wildcard-score', (req, res) => {
+  const {
+    user: userRaw,
+    pin,
+    targetUser: targetUserRaw,
+    season: seasonRaw,
+    round: roundRaw,
+    hit
+  } = req.body || {};
+
+  const cfg = loadConfig();
+  const actor = requireKnownUser(cfg, userRaw, pin);
+  const targetUser = String(targetUserRaw || actor).trim();
+  if (!getConfiguredUsers().includes(targetUser)) throw fail('Unknown target user.', 400);
+
+  const season = requireSeason(seasonRaw);
+  const round = requireRound(roundRaw);
+  const normalizedHit = toBoolNullable(hit);
+
+  const data = loadDb();
+  const pred = data.predictions.find(
+    (row) => row.user === targetUser && row.season === season && row.round === round
+  );
+  if (!pred) throw fail('Prediction not found for that user and round.', 404);
+  if (!pred.wildcard_driver_id && !String(pred.wildcard_text || '').trim()) {
+    throw fail('No wildcard pick exists for that round.', 400);
+  }
+
+  const preWriteSnapshot = createPreWriteSnapshot(`pre-wildcard-r${round}-${targetUser}`);
+  pred.wildcard_result = normalizedHit;
+  pred.wildcard_scored_by = normalizedHit === null ? null : actor;
+  pred.wildcard_scored_at = normalizedHit === null ? null : new Date().toISOString();
+  pred.updated_at = new Date().toISOString();
+
+  updateAllPredictionScores(data);
+  saveDb(data);
+  const postWriteSnapshot = createPostWriteSnapshot(`post-wildcard-r${round}-${targetUser}`);
+
+  res.json({
+    ok: true,
+    user: targetUser,
+    season,
+    round,
+    wildcardResult: pred.wildcard_result,
+    wildcardScoredBy: pred.wildcard_scored_by,
+    wildcardScoredAt: pred.wildcard_scored_at,
+    scoreWildcard: pred.score_wildcard || 0,
+    scoreTotal: pred.score_total || 0,
+    preWriteSnapshot,
+    postWriteSnapshot
+  });
 });
 
 app.get('/api/predictions', (req, res) => {
@@ -7068,11 +7191,13 @@ app.get('/api/predictions', (req, res) => {
       const a = data.race_actuals.find(x => x.season === season && x.round === round);
       return {
         ...p,
-        pole_driver_id: a?.pole_driver_id || null,
-        p1_driver_id: a?.p1_driver_id || null,
-        p2_driver_id: a?.p2_driver_id || null,
-        p3_driver_id: a?.p3_driver_id || null,
-        fastest_lap_driver_id: a?.fastest_lap_driver_id || null
+        actuals: {
+          pole_driver_id: a?.pole_driver_id || null,
+          p1_driver_id: a?.p1_driver_id || null,
+          p2_driver_id: a?.p2_driver_id || null,
+          p3_driver_id: a?.p3_driver_id || null,
+          fastest_lap_driver_id: a?.fastest_lap_driver_id || null
+        }
       };
     });
 
@@ -7493,7 +7618,7 @@ app.get('/api/season/accuracy', (req, res) => {
   const season = requireSeason(req.query.season);
   const data = loadDb();
   const users = getConfiguredUsers();
-  const actuals = data.race_actuals.filter(a => a.season === season);
+  const wildcardRule = loadConfig().wildcardRule;
 
   const rows = users.map(user => {
     const preds = data.predictions.filter(p => p.user === user && p.season === season);
@@ -7501,21 +7626,11 @@ app.get('/api/season/accuracy', (req, res) => {
     let attempted = 0;
 
     for (const pred of preds) {
-      const actual = actuals.find(a => a.round === pred.round);
-      if (!actual) continue;
-
-      const pairs = [
-        ['p1_driver_id', actual.p1_driver_id],
-        ['p2_driver_id', actual.p2_driver_id],
-        ['p3_driver_id', actual.p3_driver_id],
-        ['pole_driver_id', actual.pole_driver_id],
-        ['fastest_lap_driver_id', actual.fastest_lap_driver_id]
-      ];
-
-      for (const [key, actualId] of pairs) {
-        if (pred[key]) attempted += 1;
-        if (pred[key] && actualId && pred[key] === actualId) correct += 1;
-      }
+      const actual = data.race_actuals.find(a => a.season === season && a.round === pred.round);
+      const sideBetActuals = computeRoundSideBetActuals(data, season, pred.round);
+      const summary = predictionAccuracySummary(pred, actual, sideBetActuals, data, wildcardRule);
+      correct += summary.correct;
+      attempted += summary.attempted;
     }
 
     const accuracy = attempted ? correct / attempted : 0;
@@ -7551,6 +7666,7 @@ app.get('/api/weekly/stats', (req, res) => {
   const data = loadDb();
   const users = getConfiguredUsers();
   const schedule = getSeasonSchedule(season);
+  const wildcardRule = loadConfig().wildcardRule;
 
   const rounds = schedule.map(r => r.round);
 
@@ -7560,10 +7676,13 @@ app.get('/api/weekly/stats', (req, res) => {
     const userRows = users.map(user => {
       const pred = data.predictions.find(p => p.user === user && p.season === season && p.round === r.round);
       if (!pred) return { user, missing: true };
-      const attempted = ['p1_driver_id','p2_driver_id','p3_driver_id','pole_driver_id','fastest_lap_driver_id']
-        .reduce((sum, k) => sum + (pred[k] ? 1 : 0), 0);
-      const correct = (pred.score_p1 || 0) + (pred.score_p2 || 0) + (pred.score_p3 || 0) + (pred.score_pole || 0) + (pred.score_fastest_lap || 0);
-      const accuracy = attempted ? correct / attempted : 0;
+      const accuracySummary = predictionAccuracySummary(
+        pred,
+        actual,
+        sideBetActuals,
+        data,
+        wildcardRule
+      );
       return {
         user,
         picks: {
@@ -7609,7 +7728,10 @@ app.get('/api/weekly/stats', (req, res) => {
         },
         lock: pred.lock_field || null,
         podium_exact: pred.podium_exact || 0,
-        accuracy
+        accuracy: accuracySummary.accuracy,
+        correct: accuracySummary.correct,
+        attempted: accuracySummary.attempted,
+        wildcardResult: accuracySummary.wildcardHit
       };
     });
 

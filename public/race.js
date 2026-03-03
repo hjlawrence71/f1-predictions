@@ -2,8 +2,8 @@ function qs(name) {
   return new URLSearchParams(window.location.search).get(name);
 }
 
-async function fetchJson(url) {
-  const res = await fetch(url);
+async function fetchJson(url, options = {}) {
+  const res = await fetch(url, options);
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
@@ -15,6 +15,8 @@ const raceNameFromQuery = qs('race') || '';
 const backToHistoricalBtn = document.getElementById('backToHistoricalBtn');
 const weekendSelect = document.getElementById('weekendSelect');
 const openWeekendBtn = document.getElementById('openWeekendBtn');
+const wildcardStatus = document.getElementById('wildcardStatus');
+const wildcardScoring = document.getElementById('wildcardScoring');
 
 function shortDate(iso) {
   if (!iso) return '';
@@ -25,6 +27,172 @@ function shortDate(iso) {
 
 function navigateToRound(roundValue, raceName) {
   window.location.href = `/race.html?season=${season}&round=${roundValue}&race=${encodeURIComponent(raceName || '')}`;
+}
+
+function driverName(nameMap, driverId) {
+  return nameMap.get(driverId) || '—';
+}
+
+function wildcardStateLabel(value) {
+  if (value === true) return 'Hit';
+  if (value === false) return 'Miss';
+  return 'Pending';
+}
+
+function wildcardStateTone(value) {
+  if (value === true) return 'dark';
+  if (value === false) return 'red';
+  return '';
+}
+
+async function promptForScorer(defaultUser) {
+  const cached = localStorage.getItem('f1-wildcard-score-user') || defaultUser || 'Harrison';
+  const user = String(window.prompt('Score wildcard as which user?', cached) || '').trim();
+  if (!user) return null;
+
+  const pin = String(window.prompt(`Enter ${user}'s PIN to save wildcard scoring.`) || '').trim();
+  if (!pin) return null;
+
+  localStorage.setItem('f1-wildcard-score-user', user);
+  return { user, pin };
+}
+
+function renderWildcardControls(preds, nameMap) {
+  if (!wildcardScoring) return;
+
+  const rows = preds.filter((row) => row.wildcard_text || row.wildcard_driver_id);
+  if (!rows.length) {
+    wildcardScoring.innerHTML = '<div class="muted">No wildcard picks saved for this weekend.</div>';
+    if (wildcardStatus) wildcardStatus.innerHTML = '<span class="chip">Waiting for wildcard picks</span>';
+    return;
+  }
+
+  if (wildcardStatus) {
+    const resolved = rows.filter((row) => row.wildcard_result === true || row.wildcard_result === false).length;
+    wildcardStatus.innerHTML = `<span class="chip ${resolved === rows.length ? 'dark' : ''}">${resolved}/${rows.length} scored</span>`;
+  }
+
+  wildcardScoring.innerHTML = rows.map((row) => {
+    const statusLabel = wildcardStateLabel(row.wildcard_result);
+    const statusTone = wildcardStateTone(row.wildcard_result);
+    const scoredMeta = row.wildcard_scored_by
+      ? `<div class="muted">Scored by ${row.wildcard_scored_by}${row.wildcard_scored_at ? ` · ${new Date(row.wildcard_scored_at).toLocaleString()}` : ''}</div>`
+      : '<div class="muted">Not scored yet.</div>';
+
+    return `
+      <article class="wildcard-score-card">
+        <header class="wildcard-score-head">
+          <div>
+            <strong>${row.user}</strong>
+            <div class="muted">Wildcard</div>
+          </div>
+          <div class="wildcard-score-points">
+            <span class="chip ${statusTone}">${statusLabel}</span>
+            <span class="chip ${row.score_wildcard ? 'dark' : ''}">${row.score_wildcard || 0} pt</span>
+          </div>
+        </header>
+        <div class="wildcard-score-body">
+          <div class="wildcard-score-text">${row.wildcard_text || driverName(nameMap, row.wildcard_driver_id)}</div>
+          ${scoredMeta}
+        </div>
+        <div class="wildcard-score-actions">
+          <button class="btn" type="button" data-wildcard-score="true" data-target-user="${row.user}">Hit</button>
+          <button class="btn ghost" type="button" data-wildcard-score="false" data-target-user="${row.user}">Miss</button>
+          <button class="btn ghost" type="button" data-wildcard-score="clear" data-target-user="${row.user}">Clear</button>
+        </div>
+      </article>
+    `;
+  }).join('');
+
+  wildcardScoring.querySelectorAll('[data-wildcard-score]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const targetUser = button.getAttribute('data-target-user');
+      const scoreValue = button.getAttribute('data-wildcard-score');
+      const scorer = await promptForScorer(targetUser);
+      if (!scorer) return;
+
+      button.disabled = true;
+      if (wildcardStatus) wildcardStatus.innerHTML = '<span class="chip">Saving wildcard score…</span>';
+
+      try {
+        await fetchJson('/api/predictions/wildcard-score', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            user: scorer.user,
+            pin: scorer.pin,
+            targetUser,
+            season,
+            round,
+            hit: scoreValue === 'clear' ? null : scoreValue === 'true'
+          })
+        });
+        await load();
+      } catch (err) {
+        if (wildcardStatus) wildcardStatus.innerHTML = `<span class="chip red">${err.message}</span>`;
+        alert(err.message);
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
+}
+
+function renderPicksTable(preds, nameMap) {
+  const actuals = preds[0]?.actuals || {};
+  const actualSummary = {
+    p1: driverName(nameMap, actuals.p1_driver_id),
+    p2: driverName(nameMap, actuals.p2_driver_id),
+    p3: driverName(nameMap, actuals.p3_driver_id),
+    pole: driverName(nameMap, actuals.pole_driver_id),
+    fastest: driverName(nameMap, actuals.fastest_lap_driver_id)
+  };
+
+  const pickRows = preds.map((p) => `
+    <tr>
+      <td>${p.user}</td>
+      <td>${driverName(nameMap, p.p1_driver_id)}</td>
+      <td>${driverName(nameMap, p.p2_driver_id)}</td>
+      <td>${driverName(nameMap, p.p3_driver_id)}</td>
+      <td>${driverName(nameMap, p.pole_driver_id)}</td>
+      <td>${driverName(nameMap, p.fastest_lap_driver_id)}</td>
+      <td>${p.wildcard_text || driverName(nameMap, p.wildcard_driver_id)}</td>
+      <td><span class="chip ${wildcardStateTone(p.wildcard_result)}">${wildcardStateLabel(p.wildcard_result)}</span></td>
+      <td>${p.score_total || 0}</td>
+    </tr>
+  `).join('');
+
+  document.getElementById('picksTable').innerHTML = `
+    <table>
+      <thead>
+        <tr>
+          <th>User</th>
+          <th>P1</th>
+          <th>P2</th>
+          <th>P3</th>
+          <th>Pole</th>
+          <th>Fastest</th>
+          <th>Wildcard</th>
+          <th>Wildcard score</th>
+          <th>Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="actuals-row">
+          <td>Actual</td>
+          <td>${actualSummary.p1}</td>
+          <td>${actualSummary.p2}</td>
+          <td>${actualSummary.p3}</td>
+          <td>${actualSummary.pole}</td>
+          <td>${actualSummary.fastest}</td>
+          <td>Manual review</td>
+          <td>—</td>
+          <td>—</td>
+        </tr>
+        ${pickRows}
+      </tbody>
+    </table>
+  `;
 }
 
 async function load() {
@@ -71,11 +239,11 @@ async function load() {
   const nameMap = new Map(drivers.map(d => [d.driverId, d.driverName]));
 
   const qualiRows = quali.slice(0, 10).map((q, i) => `
-    <tr><td>${i + 1}</td><td>${nameMap.get(q.driverId) || q.driverId}</td></tr>
+    <tr><td>${i + 1}</td><td>${driverName(nameMap, q.driverId)}</td></tr>
   `).join('');
 
   const raceRows = raceResults.slice(0, 10).map((r, i) => `
-    <tr><td>${i + 1}</td><td>${nameMap.get(r.driverId) || r.driverId}</td><td>${r.points || 0}</td></tr>
+    <tr><td>${i + 1}</td><td>${driverName(nameMap, r.driverId)}</td><td>${r.points || 0}</td></tr>
   `).join('');
 
   document.getElementById('qualiTable').innerHTML = `
@@ -85,30 +253,11 @@ async function load() {
     <table><thead><tr><th>#</th><th>Driver</th><th>Pts</th></tr></thead><tbody>${raceRows}</tbody></table>
   `;
 
-  const pickRows = preds.map(p => `
-    <tr>
-      <td>${p.user}</td>
-      <td>${nameMap.get(p.p1_driver_id) || '—'}</td>
-      <td>${nameMap.get(p.p2_driver_id) || '—'}</td>
-      <td>${nameMap.get(p.p3_driver_id) || '—'}</td>
-      <td>${nameMap.get(p.pole_driver_id) || '—'}</td>
-      <td>${nameMap.get(p.fastest_lap_driver_id) || '—'}</td>
-      <td>${p.score_total || 0}</td>
-    </tr>
-  `).join('');
-
-  document.getElementById('picksTable').innerHTML = `
-    <table>
-      <thead>
-        <tr>
-          <th>User</th><th>P1</th><th>P2</th><th>P3</th><th>Pole</th><th>Fastest</th><th>Total</th>
-        </tr>
-      </thead>
-      <tbody>${pickRows}</tbody>
-    </table>
-  `;
+  renderPicksTable(preds, nameMap);
+  renderWildcardControls(preds, nameMap);
 }
 
 load().catch(err => {
   document.getElementById('picksTable').textContent = err.message;
+  if (wildcardStatus) wildcardStatus.innerHTML = `<span class="chip red">${err.message}</span>`;
 });
