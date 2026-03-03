@@ -813,20 +813,37 @@ function buildDriverIntelCard(s) {
   const qTrendRun = summarizePositionSeries(qTrend.series || []);
   const rTrendRun = summarizePositionSeries(rTrend.series || []);
   const trendSnapshot = `Q ${qTrendRun} · R ${rTrendRun}`;
-  const riskProfile = computeRiskProfile(ri, s.sample);
-  const sampleSize = formatSampleSizeCompact(s.sample);
-  const sessionConversionSecondary = `${qi.q3_appearances ?? 0} Q3 · ${qi.q1_knockouts ?? 0} Q1 exits`;
-  const teammateEdgeSecondary = `Best ${formatDeltaSeconds(bestQualiGapMs, 3, true)} · ${formatStageGapCompact(qi)}`;
-  const pacePackageSecondary = racePaceDeltaMs === null
-    ? 'No compound split yet'
-    : `${formatMs(racePaceDeltaMs, 0)} stint spread · ${formatMs(ri.lap_pace_consistency_ms, 0)} sigma`;
-  const positionCraftSecondary = `Lap 1 ${formatSigned(ri.first_lap_gain_loss, 2)} · Recovery ${formatSigned(ri.recovery_index, 2)}`;
-  const formTrendSecondary = `${trendSnapshot} · ${qTrendLabel}/${rTrendLabel}`;
-  const qHitSecondary = `Avg delta ${formatSigned(ci.quali_to_race_conversion?.avg_delta, 2)}`;
+  const hasOfficialData = Math.max(Number(s.sample?.race_starts || 0), Number(s.sample?.quali_starts || 0)) > 0;
+  const preSeasonSecondary = 'No official round data yet';
+  const riskProfile = hasOfficialData
+    ? computeRiskProfile(ri, s.sample)
+    : { score: null, label: '—', tone: 'muted', secondary: preSeasonSecondary };
+  const sampleSize = hasOfficialData ? formatSampleSizeCompact(s.sample) : 'No rounds yet';
+  const sessionConversionSecondary = hasOfficialData
+    ? `${qi.q3_appearances ?? 0} Q3 · ${qi.q1_knockouts ?? 0} Q1 exits`
+    : preSeasonSecondary;
+  const teammateEdgeSecondary = hasOfficialData
+    ? `Best ${formatDeltaSeconds(bestQualiGapMs, 3, true)} · ${formatStageGapCompact(qi)}`
+    : preSeasonSecondary;
+  const pacePackageSecondary = !hasOfficialData
+    ? preSeasonSecondary
+    : racePaceDeltaMs === null
+      ? 'No compound split yet'
+      : `${formatMs(racePaceDeltaMs, 0)} stint spread · ${formatMs(ri.lap_pace_consistency_ms, 0)} sigma`;
+  const positionCraftSecondary = hasOfficialData
+    ? `Lap 1 ${formatSigned(ri.first_lap_gain_loss, 2)} · Recovery ${formatSigned(ri.recovery_index, 2)}`
+    : preSeasonSecondary;
+  const formTrendSecondary = hasOfficialData
+    ? `${trendSnapshot} · ${qTrendLabel}/${rTrendLabel}`
+    : preSeasonSecondary;
+  const qHitSecondary = hasOfficialData
+    ? `Avg delta ${formatSigned(ci.quali_to_race_conversion?.avg_delta, 2)}`
+    : preSeasonSecondary;
+  const formSeriesLabel = hasOfficialData ? formatSeries(s.form?.positions || []) : 'Pre-season';
 
   const stintHtml = stintRows.length
     ? stintRows.map((row) => `<span class="chip">${row.compound}: ${formatLapTime(row.avg_lap_ms)} (${row.laps} laps)</span>`).join('')
-    : '<span class="chip">No race timing laps yet</span>';
+    : `<span class="chip">${hasOfficialData ? 'No race timing laps yet' : preSeasonSecondary}</span>`;
 
   const qualDetails = [
     renderDetailSection('Session Depth', [
@@ -902,7 +919,7 @@ function buildDriverIntelCard(s) {
         <span>${metricLabelHtml('Avg quali', 'avg_quali', 'strip-label')}${metricStrong(s.driverId, 'avg_quali', s.avg_quali, formatNumber(s.avg_quali, 2), 'lower')}</span>
         <span>${metricLabelHtml('Form avg', 'form_avg', 'strip-label')}${metricStrong(s.driverId, 'form_avg', s.form?.avg_finish, formatNumber(s.form?.avg_finish, 2), 'lower')}</span>
         <span>${metricLabelHtml('Form pts', 'form_points', 'strip-label')}${metricStrong(s.driverId, 'form_points', s.form?.points ?? 0, s.form?.points ?? 0, 'higher')}</span>
-        <span>${metricLabelHtml('Form series', 'form_series', 'strip-label')}<strong>${formatSeries(s.form?.positions || [])}</strong></span>
+        <span>${metricLabelHtml('Form series', 'form_series', 'strip-label')}<strong>${formSeriesLabel}</strong></span>
       </section>
 
       <div class="intel-grid">
@@ -919,7 +936,7 @@ function buildDriverIntelCard(s) {
               displayValue: formatNumber(qi.avg_quali_position, 2),
               better: 'lower',
               label: 'Avg Quali Position',
-              secondary: `Over ${sampleSize}`
+              secondary: hasOfficialData ? `Over ${sampleSize}` : preSeasonSecondary
             })}
             ${renderMetricTile({
               driverId: s.driverId,
@@ -928,7 +945,7 @@ function buildDriverIntelCard(s) {
               displayValue: qi.best_grid_position ?? '—',
               better: 'lower',
               label: 'Best Grid Position',
-              secondary: `Worst ${qi.worst_grid_position ?? '—'}`
+              secondary: hasOfficialData ? `Worst ${qi.worst_grid_position ?? '—'}` : preSeasonSecondary
             })}
             ${renderMetricTile({
               driverId: s.driverId,
@@ -937,7 +954,7 @@ function buildDriverIntelCard(s) {
               displayValue: formatNumber(qi.final_run_clutch_rank, 2),
               better: 'lower',
               label: 'Final-Run Clutch',
-              secondary: `${qComparedRounds} rounds sampled`
+              secondary: hasOfficialData ? `${qComparedRounds} rounds sampled` : preSeasonSecondary
             })}
             ${renderMetricTile({
               driverId: s.driverId,
@@ -946,7 +963,7 @@ function buildDriverIntelCard(s) {
               displayValue: formatHeadToHead(qi),
               better: 'higher',
               label: 'Head to Head',
-              secondary: `${qComparedRounds} rounds`,
+              secondary: hasOfficialData ? `${qComparedRounds} rounds` : preSeasonSecondary,
               infoKey: 'head_to_head'
             })}
             ${renderMetricTile({
@@ -989,7 +1006,7 @@ function buildDriverIntelCard(s) {
               displayValue: formatNumber(ri.avg_race_finish, 2),
               better: 'lower',
               label: 'Avg Race Finish',
-              secondary: `Across ${sampleSize}`
+              secondary: hasOfficialData ? `Across ${sampleSize}` : preSeasonSecondary
             })}
             ${renderMetricTile({
               driverId: s.driverId,
@@ -998,7 +1015,7 @@ function buildDriverIntelCard(s) {
               displayValue: formatPct(ri.points_conversion_rate, 1),
               better: 'higher',
               label: 'Points Conversion',
-              secondary: `DNF ${formatPct(ri.dnf_rate, 1)}`
+              secondary: hasOfficialData ? `DNF ${formatPct(ri.dnf_rate, 1)}` : preSeasonSecondary
             })}
             ${renderMetricTile({
               driverId: s.driverId,
@@ -1007,8 +1024,8 @@ function buildDriverIntelCard(s) {
               displayValue: formatDeltaSeconds(ri.teammate_race_pace_gap_ms, 3, true),
               better: 'lower',
               label: 'Teammate Race Gap',
-              secondary: formatMs(ri.teammate_race_pace_gap_ms, 0),
-              status: computePaceStatus(ri.teammate_race_pace_gap_ms)
+              secondary: hasOfficialData ? formatMs(ri.teammate_race_pace_gap_ms, 0) : preSeasonSecondary,
+              status: hasOfficialData ? computePaceStatus(ri.teammate_race_pace_gap_ms) : null
             })}
             ${renderMetricTile({
               driverId: s.driverId,
@@ -1018,7 +1035,7 @@ function buildDriverIntelCard(s) {
               better: 'lower',
               label: 'Pace Package',
               secondary: pacePackageSecondary,
-              status: computeConsistencyStatus(racePaceDeltaMs ?? ri.lap_pace_consistency_ms),
+              status: hasOfficialData ? computeConsistencyStatus(racePaceDeltaMs ?? ri.lap_pace_consistency_ms) : null,
               infoKey: 'pace_package'
             })}
             ${renderMetricTile({
@@ -1028,8 +1045,8 @@ function buildDriverIntelCard(s) {
               displayValue: formatDeltaSeconds(ri.lap_pace_consistency_ms, 3, false, 's σ'),
               better: 'lower',
               label: 'Lap Consistency',
-              secondary: formatMs(ri.lap_pace_consistency_ms, 0),
-              status: computeConsistencyStatus(ri.lap_pace_consistency_ms)
+              secondary: hasOfficialData ? formatMs(ri.lap_pace_consistency_ms, 0) : preSeasonSecondary,
+              status: hasOfficialData ? computeConsistencyStatus(ri.lap_pace_consistency_ms) : null
             })}
             ${renderMetricTile({
               driverId: s.driverId,
@@ -1062,7 +1079,7 @@ function buildDriverIntelCard(s) {
               displayValue: formatNumber(ci.weekend_score, 2),
               better: 'higher',
               label: 'Weekend Score',
-              secondary: `${sampleSize} in model`
+              secondary: hasOfficialData ? `${sampleSize} in model` : preSeasonSecondary
             })}
             ${renderMetricTile({
               driverId: s.driverId,
@@ -1071,7 +1088,7 @@ function buildDriverIntelCard(s) {
               displayValue: formatSigned(ci.momentum_index, 3),
               better: 'higher',
               label: 'Momentum Index',
-              secondary: `Quali ${qTrendLabel} · Race ${rTrendLabel}`
+              secondary: hasOfficialData ? `Quali ${qTrendLabel} · Race ${rTrendLabel}` : preSeasonSecondary
             })}
             ${renderMetricTile({
               driverId: s.driverId,
@@ -1110,7 +1127,7 @@ function buildDriverIntelCard(s) {
               displayValue: sampleSize,
               better: 'higher',
               label: 'Sample Size',
-              secondary: `R ${s.sample?.race_starts ?? 0} · Q ${s.sample?.quali_starts ?? 0}`,
+              secondary: hasOfficialData ? `R ${s.sample?.race_starts ?? 0} · Q ${s.sample?.quali_starts ?? 0}` : preSeasonSecondary,
               infoKey: 'sample_size'
             })}
           </div>

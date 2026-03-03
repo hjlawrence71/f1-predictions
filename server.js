@@ -1693,6 +1693,92 @@ function getBestStageLap(qualTimingByKey, qualByKey, season, round, driverId, st
   return null;
 }
 
+function buildGridShellIntelligenceRow(driver, season, scheduleRounds = 0) {
+  return {
+    driverId: driver.driverId,
+    driverName: driver.driverName,
+    team: displayTeamName(driver.team),
+    points: 0,
+    wins: 0,
+    podiums: 0,
+    poles: 0,
+    fastest_laps: 0,
+    avg_finish: null,
+    avg_quali: null,
+    form: {
+      positions: [],
+      avg_finish: null,
+      points: 0
+    },
+    qualifying_intel: {
+      q3_appearances: 0,
+      q2_appearances: 0,
+      q1_knockouts: 0,
+      pole_count: 0,
+      avg_quali_position: null,
+      best_grid_position: null,
+      worst_grid_position: null,
+      stage_survival_rate: {
+        q2: null,
+        q3: null
+      },
+      q1_to_q2_improvement_ms: null,
+      q2_to_q3_improvement_ms: null,
+      head_to_head: {
+        wins: 0,
+        losses: 0,
+        ties: 0,
+        compared_rounds: 0
+      },
+      teammate_gap_by_stage: {
+        q1: { avg_ms: null, median_ms: null },
+        q2: { avg_ms: null, median_ms: null },
+        q3: { avg_ms: null, median_ms: null }
+      },
+      final_run_clutch_rank: null
+    },
+    race_intel: {
+      avg_race_finish: null,
+      positions_gained_lost: null,
+      pit_cycle_position_delta: null,
+      restart_gain_loss: null,
+      recovery_index: null,
+      lap_pace_consistency_ms: null,
+      teammate_race_pace_gap_ms: null,
+      first_lap_gain_loss: null,
+      fastest_lap_count: 0,
+      dnf_rate: null,
+      points_conversion_rate: null,
+      stint_pace_by_compound: []
+    },
+    combined_intel: {
+      weekend_score: null,
+      quali_trend_last5: {
+        slope: null,
+        direction: 'steady',
+        series: []
+      },
+      race_trend_last5: {
+        slope: null,
+        direction: 'steady',
+        series: []
+      },
+      momentum_index: null,
+      quali_to_race_conversion: {
+        avg_delta: null,
+        hit_rate: null
+      }
+    },
+    sample: {
+      race_starts: 0,
+      quali_starts: 0,
+      schedule_rounds: scheduleRounds,
+      source_season: season,
+      grid_shell: true
+    }
+  };
+}
+
 function computeDriverIntelligence(data, season, options = {}) {
   const maxRoundRaw = toInt(options?.maxRound);
   const maxRound = maxRoundRaw && maxRoundRaw > 0 ? maxRoundRaw : Number.POSITIVE_INFINITY;
@@ -1724,6 +1810,11 @@ function computeDriverIntelligence(data, season, options = {}) {
     .sort((a, b) => a.round - b.round);
 
   const recentRounds = schedule.slice(-5).map((r) => r.round);
+  const currentYear = new Date().getFullYear();
+  const includeGridShells = options?.includeGridShells !== false
+    && season === currentYear
+    && results.length === 0
+    && qual.length === 0;
 
   const resultByKey = new Map(results.map(r => [`${r.season}:${r.round}:${r.driverId}`, r]));
   const qualByKey = new Map(qual.map(q => [`${q.season}:${q.round}:${q.driverId}`, q]));
@@ -2093,8 +2184,17 @@ function computeDriverIntelligence(data, season, options = {}) {
   return rows.filter((row) => {
     const raceStarts = Number(row.sample?.race_starts || 0);
     const qualiStarts = Number(row.sample?.quali_starts || 0);
-    if (!(raceStarts > 0 || qualiStarts > 0)) return false;
+    if (!(raceStarts > 0 || qualiStarts > 0)) {
+      if (!includeGridShells) return false;
+      if (isExcludedIntelligenceDriver(season, row)) return false;
+      return true;
+    }
     return !isExcludedIntelligenceDriver(season, row);
+  }).map((row) => {
+    const raceStarts = Number(row.sample?.race_starts || 0);
+    const qualiStarts = Number(row.sample?.quali_starts || 0);
+    if (raceStarts > 0 || qualiStarts > 0) return row;
+    return buildGridShellIntelligenceRow(row, season, schedule.length);
   });
 }
 
