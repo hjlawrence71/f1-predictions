@@ -5739,6 +5739,222 @@ async function importOpenF1Round({ season, round }) {
   };
 }
 
+function buildRehearsalDriverLookup(grid) {
+  const byId = new Map();
+  const byName = new Map();
+
+  for (const driver of grid || []) {
+    if (!driver?.driverId) continue;
+    byId.set(driver.driverId, driver);
+    byId.set(`name:${slugify(driver.driverName)}`, driver);
+    byName.set(normalizeDriverNameKey(driver.driverName), driver);
+    byName.set(normalizeDriverNameKey(String(driver.driverId).replace(/[:_-]+/g, ' ')), driver);
+  }
+
+  return { byId, byName };
+}
+
+function resolveRehearsalDriverId(grid, input, label = 'driver') {
+  if (input === undefined || input === null || input === '') return null;
+
+  const raw = String(input).trim();
+  const lookup = buildRehearsalDriverLookup(grid);
+  const direct = lookup.byId.get(raw);
+  if (direct?.driverId) return direct.driverId;
+
+  const normalized = normalizeDriverNameKey(raw);
+  const byName = lookup.byName.get(normalized);
+  if (byName?.driverId) return byName.driverId;
+
+  const matches = (grid || []).filter((driver) => {
+    const nameKey = normalizeDriverNameKey(driver.driverName);
+    return nameKey === normalized || nameKey.includes(normalized) || normalized.includes(nameKey);
+  });
+  if (matches.length === 1) return matches[0].driverId;
+
+  throw fail(`Unknown rehearsal ${label}: ${raw}`, 400);
+}
+
+function orderedUniqueDriverIds(preferredIds, fallbackIds) {
+  const seen = new Set();
+  const out = [];
+
+  for (const source of [preferredIds || [], fallbackIds || []]) {
+    for (const driverId of source) {
+      if (!driverId || seen.has(driverId)) continue;
+      seen.add(driverId);
+      out.push(driverId);
+    }
+  }
+
+  return out;
+}
+
+function buildRehearsalQualifyingRows(season, round, order) {
+  return order.map((driverId, index) => {
+    const position = index + 1;
+    return {
+      season,
+      round,
+      driverId,
+      position,
+      q1_ms: 80000 + (position * 117),
+      q2_ms: position <= 15 ? 79750 + (position * 103) : null,
+      q3_ms: position <= 10 ? 79550 + (position * 89) : null
+    };
+  });
+}
+
+function buildRehearsalRaceRows(season, round, order, qualRows, raceConfig = {}) {
+  const qualPosByDriver = new Map((qualRows || []).map((row) => [row.driverId, toInt(row.position)]));
+  const dnfIds = new Set((raceConfig.dnfDriverIds || []).filter(Boolean));
+  const fastestLapDriverId = raceConfig.fastestLapDriverId || null;
+  const finishedRows = [];
+  const retiredRows = [];
+  let finishPosition = 1;
+
+  for (const [index, driverId] of order.entries()) {
+    const gridPos = qualPosByDriver.get(driverId) || (index + 1);
+    const isDnf = dnfIds.has(driverId);
+    const row = {
+      season,
+      round,
+      driverId,
+      position: isDnf ? null : finishPosition,
+      points: isDnf ? 0 : (PROJECTION_POINTS_TABLE[finishPosition - 1] || 0),
+      fastestLapRank: driverId === fastestLapDriverId ? 1 : null,
+      grid: gridPos,
+      laps: isDnf ? null : 57,
+      status: isDnf ? 'DNF' : 'Finished'
+    };
+
+    if (isDnf) {
+      retiredRows.push(row);
+    } else {
+      finishedRows.push(row);
+      finishPosition += 1;
+    }
+  }
+
+  return [...finishedRows, ...retiredRows];
+}
+
+function importRehearsalRound({ user, season, round, phase = 'full', payload = {} }) {
+  const normalizedPhase = String(phase || 'full').trim().toLowerCase();
+  if (!['qualifying', 'race', 'full'].includes(normalizedPhase)) {
+    throw fail('phase must be qualifying, race, or full', 400);
+  }
+
+  const currentSeason = new Date().getFullYear();
+  if (season !== currentSeason) {
+    throw fail(`Rehearsal import is only enabled for the current season (${currentSeason}).`, 400);
+  }
+
+  const data = loadDb();
+  ensureSeasonRaces(data, season);
+
+  const raceMeta = (data.races || []).find((row) => row.season === season && row.round === round);
+  if (!raceMeta) throw fail(`Race round ${round} not found for season ${season}.`, 404);
+
+  const grid = resolveGridDrivers(data, season);
+  if (!grid.length) throw fail('No current grid found for rehearsal import.', 400);
+
+  const fallbackOrder = grid.map((driver) => driver.driverId);
+  let importedQualifying = 0;
+  let importedRace = 0;
+
+  const preWriteSnapshot = createPreWriteSnapshot(`pre-rehearsal-${season}-r${round}-${normalizedPhase}`);
+
+  let qualifyingRows = (data.qualifying_results || []).filter((row) => row.season === season && row.round === round);
+  if (normalizedPhase === 'qualifying' || normalizedPhase === 'full') {
+    const qualConfig = payload.qualifying || {};
+    const preferredOrder = Array.isArray(qualConfig.order)
+      ? qualConfig.order.map((value, index) => resolveRehearsalDriverId(grid, value, `qualifying order slot ${index + 1}`))
+      : [];
+    const poleDriverId = resolveRehearsalDriverId(grid, qualConfig.pole || preferredOrder[0] || fallbackOrder[0], 'qualifying pole');
+    const qualOrder = orderedUniqueDriverIds([poleDriverId, ...preferredOrder], fallbackOrder);
+
+    qualifyingRows = buildRehearsalQualifyingRows(season, round, qualOrder);
+    data.qualifying_results = (data.qualifying_results || []).filter((row) => !(row.season === season && row.round === round));
+    data.qualifying_results.push(...qualifyingRows);
+    data.qualifying_timing = (data.qualifying_timing || []).filter((row) => !(row.season === season && row.round === round));
+    importedQualifying = qualifyingRows.length;
+  }
+
+  if (normalizedPhase === 'race' || normalizedPhase === 'full') {
+    const raceConfig = payload.race || {};
+    const preferredRaceOrder = Array.isArray(raceConfig.order)
+      ? raceConfig.order.map((value, index) => resolveRehearsalDriverId(grid, value, `race order slot ${index + 1}`))
+      : [];
+    const p1DriverId = resolveRehearsalDriverId(grid, raceConfig.p1 || preferredRaceOrder[0] || fallbackOrder[0], 'race P1');
+    const p2DriverId = resolveRehearsalDriverId(grid, raceConfig.p2 || preferredRaceOrder[1] || fallbackOrder[1], 'race P2');
+    const p3DriverId = resolveRehearsalDriverId(grid, raceConfig.p3 || preferredRaceOrder[2] || fallbackOrder[2], 'race P3');
+    const fastestLapDriverId = resolveRehearsalDriverId(grid, raceConfig.fastestLap || p1DriverId, 'fastest lap');
+    const dnfDriverIds = Array.isArray(raceConfig.dnfs)
+      ? raceConfig.dnfs.map((value, index) => resolveRehearsalDriverId(grid, value, `DNF slot ${index + 1}`))
+      : [];
+    const raceOrder = orderedUniqueDriverIds([p1DriverId, p2DriverId, p3DriverId, ...preferredRaceOrder], fallbackOrder);
+
+    const raceRows = buildRehearsalRaceRows(season, round, raceOrder, qualifyingRows, {
+      dnfDriverIds,
+      fastestLapDriverId
+    });
+
+    data.race_results = (data.race_results || []).filter((row) => !(row.season === season && row.round === round));
+    data.race_results.push(...raceRows);
+    data.race_timing = (data.race_timing || []).filter((row) => !(row.season === season && row.round === round));
+    importedRace = raceRows.length;
+
+    const existingActual = (data.race_actuals || []).find((row) => row.season === season && row.round === round);
+    const redFlag = toBoolNullable(raceConfig.redFlag);
+    if (existingActual) existingActual.red_flag = redFlag;
+    raceMeta.red_flag = redFlag;
+  }
+
+  normalizePredictionIds(data, grid);
+  rebuildActualsAndScores(data);
+  saveDb(data);
+  const postWriteSnapshot = createPostWriteSnapshot(`post-rehearsal-${season}-r${round}-${normalizedPhase}`);
+
+  const actual = (data.race_actuals || []).find((row) => row.season === season && row.round === round) || null;
+  const sideBetActuals = computeRoundSideBetActuals(data, season, round);
+
+  appendImportAudit({
+    source: 'rehearsal',
+    action: `import-${normalizedPhase}`,
+    season,
+    round,
+    changedRows: {
+      qualifying_results: importedQualifying,
+      race_results: importedRace
+    },
+    details: {
+      importedBy: user,
+      phase: normalizedPhase,
+      snapshots: {
+        preWriteSnapshot,
+        postWriteSnapshot
+      }
+    }
+  });
+
+  return {
+    ok: true,
+    season,
+    round,
+    phase: normalizedPhase,
+    raceName: raceMeta.raceName,
+    preWriteSnapshot,
+    postWriteSnapshot,
+    imported: {
+      qualifying: importedQualifying,
+      race: importedRace
+    },
+    actuals: actual,
+    sideBetActuals
+  };
+}
+
 function fail(message, status = 400) {
   const err = new Error(message);
   err.status = status;
@@ -7071,6 +7287,27 @@ app.post('/api/admin/snapshots/rollback', (req, res) => {
     ok: true,
     restoredBy: user,
     ...result
+  });
+});
+
+app.post('/api/admin/rehearsal/import-round', (req, res) => {
+  const { user: userRaw, pin, season: seasonRaw, round: roundRaw, phase, payload } = req.body || {};
+  const cfg = loadConfig();
+  const user = requireKnownUser(cfg, userRaw, pin);
+  const season = requireSeason(seasonRaw);
+  const round = requireRound(roundRaw);
+
+  const result = importRehearsalRound({
+    user,
+    season,
+    round,
+    phase,
+    payload: payload || {}
+  });
+
+  res.json({
+    ...result,
+    importedBy: user
   });
 });
 
