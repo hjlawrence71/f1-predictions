@@ -6171,6 +6171,7 @@ body {
     gap: 8px;
     align-items: stretch;
     overflow-x: auto;
+    scroll-snap-type: x proximity;
     padding-bottom: 4px;
     -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
@@ -6185,13 +6186,29 @@ body {
   .app-header .header-actions > a.btn,
   .app-header .header-actions > button.btn {
     flex: 0 0 auto;
-    min-width: 118px;
+    min-width: 88px;
     min-height: 40px;
     white-space: nowrap;
     word-break: normal;
     text-align: center;
-    font-size: 12px;
-    padding: 10px 12px;
+    font-size: 11px;
+    padding: 10px 11px;
+    scroll-snap-align: start;
+  }
+
+  .app-header .header-actions > a[data-mobile-label] {
+    position: relative;
+    font-size: 0;
+    letter-spacing: 0;
+  }
+
+  .app-header .header-actions > a[data-mobile-label]::after {
+    content: attr(data-mobile-label);
+    display: inline-block;
+    font-size: 11px;
+    line-height: 1.1;
+    letter-spacing: 0.04em;
+    color: currentColor;
   }
 
   .weekly-page[data-weekly-layout='race-battle'] .battle-control-stack {
