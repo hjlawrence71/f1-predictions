@@ -7823,6 +7823,7 @@ app.get('/api/weekly/stats', (req, res) => {
       ].filter((value) => Number(value || 0) > 0).length;
     }, 0);
     const sideBetHitRate = sideBetAttempts ? sideBetHits / sideBetAttempts : 0;
+    const wildcardPoints = preds.reduce((sum, p) => sum + Number(p.score_wildcard || 0), 0);
 
     return {
       user,
@@ -7838,7 +7839,8 @@ app.get('/api/weekly/stats', (req, res) => {
       sideBetChaosPoints,
       sideBetAttempts,
       sideBetHits,
-      sideBetHitRate
+      sideBetHitRate,
+      wildcardPoints
     };
   });
 

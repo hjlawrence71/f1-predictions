@@ -64,6 +64,11 @@ const METRIC_HELP = {
     formula: 'Average points over the last 3 rounds.',
     better: 'Higher is better.'
   },
+  wildcard_points: {
+    description: 'Points earned from manually or automatically scored wildcard calls.',
+    formula: 'Sum of wildcard points across resolved rounds.',
+    better: 'Higher is better.'
+  },
   accuracy_rate: {
     description: 'Full-card hit rate across resolved weekly picks.',
     formula: 'Correct core picks + resolved wildcard + resolved side bets, divided by total resolved attempts.',

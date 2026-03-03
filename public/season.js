@@ -244,12 +244,13 @@ function renderTrendCards(weeklyStats, accuracyRows, timeline) {
 
           <section class="trend-group">
             <div class="trend-group-head">
-              <h4>Performance Profile</h4>
-              <span class="chip">Core + side bets</span>
+              <h4>Profile</h4>
+              <span class="chip">Full card</span>
             </div>
             <div class="trend-group-grid">
               <div class="trend-stat">${metricLabelHtml('Consistency', 'consistency')}<strong>${fixed(row.consistency)}</strong></div>
               <div class="trend-stat">${metricLabelHtml('Clutch', 'clutch')}<strong>${fixed(row.clutch)}</strong></div>
+              <div class="trend-stat">${metricLabelHtml('Wildcard pts', 'wildcard_points')}<strong>${row.wildcardPoints || 0}</strong></div>
             </div>
           </section>
 
