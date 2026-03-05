@@ -1237,6 +1237,18 @@ async function fetchOpenF1(resource, params = {}, retries = 3) {
   throw fail('OpenF1 ' + resource + ' unavailable', 502);
 }
 
+async function fetchOpenF1Soft(resource, params = {}, retries = 3) {
+  try {
+    return await fetchOpenF1(resource, params, retries);
+  } catch (error) {
+    const message = String(error?.message || '');
+    if (message.includes('failed (404)') || message.includes('No results found')) {
+      return [];
+    }
+    throw error;
+  }
+}
+
 function selectOpenF1Meeting(meetings, season, round, scheduleRow) {
   const raceMeetings = (meetings || [])
     .filter((m) => m.year === season)
@@ -5384,6 +5396,240 @@ async function ensureOpenF1TestingData(season) {
   };
 }
 
+function openF1DriverDisplayName(driverMeta, resultRow, driverNumber) {
+  const fullName = String(
+    resultRow?.full_name ||
+    driverMeta?.full_name ||
+    ''
+  ).trim();
+  if (fullName) return fullName;
+
+  const firstName = String(resultRow?.first_name || driverMeta?.first_name || '').trim();
+  const lastName = String(resultRow?.last_name || driverMeta?.last_name || '').trim();
+  const joined = `${firstName} ${lastName}`.trim();
+  if (joined) return joined;
+
+  const broadcast = String(resultRow?.broadcast_name || driverMeta?.broadcast_name || '').trim();
+  if (broadcast) return broadcast.replace(/\s+/g, ' ');
+
+  const code = String(resultRow?.name_acronym || driverMeta?.name_acronym || '').trim();
+  if (code) return code;
+
+  return driverNumber ? `#${driverNumber}` : 'Unknown Driver';
+}
+
+function buildSessionRowsFromResult(resultRows, metaByNumber) {
+  const rows = [];
+
+  for (const row of resultRows || []) {
+    const driverNumber = toInt(row?.driver_number);
+    const position = toInt(row?.position);
+    if (!driverNumber || !position) continue;
+
+    const meta = metaByNumber.get(driverNumber) || {};
+    const driverName = openF1DriverDisplayName(meta, row, driverNumber);
+    const team = String(row?.team_name || meta?.team_name || '').trim() || null;
+
+    rows.push({
+      driverNumber,
+      driverName,
+      team,
+      position
+    });
+  }
+
+  rows.sort((a, b) => a.position - b.position || String(a.driverName).localeCompare(String(b.driverName)));
+  return rows;
+}
+
+function buildSessionRowsFromLaps(lapRows, metaByNumber) {
+  const bestByDriver = new Map();
+
+  for (const row of lapRows || []) {
+    const driverNumber = toInt(row?.driver_number);
+    if (!driverNumber) continue;
+    if (row?.is_pit_out_lap) continue;
+    if (row?.is_lap_valid === false || row?.is_deleted === true) continue;
+
+    const lapMs = parseOpenF1SecondsToMs(row?.lap_duration);
+    if (lapMs === null) continue;
+
+    const current = bestByDriver.get(driverNumber);
+    if (!current || lapMs < current.lapMs) {
+      bestByDriver.set(driverNumber, { lapMs });
+    }
+  }
+
+  const ranked = [...bestByDriver.entries()]
+    .sort((a, b) => a[1].lapMs - b[1].lapMs)
+    .map(([driverNumber], idx) => {
+      const meta = metaByNumber.get(driverNumber) || {};
+      return {
+        driverNumber,
+        driverName: openF1DriverDisplayName(meta, null, driverNumber),
+        team: String(meta?.team_name || '').trim() || null,
+        position: idx + 1
+      };
+    });
+
+  return ranked;
+}
+
+function summarizeTopConstructorFromSessionRows(rows) {
+  const byTeam = new Map();
+
+  for (const row of rows || []) {
+    const team = String(row?.team || '').trim();
+    const position = toInt(row?.position);
+    if (!team || !position) continue;
+
+    if (!byTeam.has(team)) {
+      byTeam.set(team, {
+        team,
+        count: 0,
+        sumPos: 0,
+        bestPos: 999
+      });
+    }
+
+    const agg = byTeam.get(team);
+    agg.count += 1;
+    agg.sumPos += position;
+    agg.bestPos = Math.min(agg.bestPos, position);
+  }
+
+  const ranked = [...byTeam.values()]
+    .map((row) => ({
+      ...row,
+      avgPos: row.count ? row.sumPos / row.count : 999
+    }))
+    .sort((a, b) =>
+      a.avgPos - b.avgPos ||
+      a.bestPos - b.bestPos ||
+      b.count - a.count ||
+      String(a.team).localeCompare(String(b.team))
+    );
+
+  return ranked[0] || null;
+}
+
+async function buildOpenF1LatestSessionPulse({ season, round }) {
+  const scheduleRow = getSeasonSchedule(season).find((row) => row.round === round) || null;
+  const meetings = await fetchOpenF1('meetings', { year: season });
+  const meeting = selectOpenF1Meeting(meetings, season, round, scheduleRow);
+
+  if (!meeting) {
+    return {
+      meeting: null,
+      session: null,
+      source: null,
+      top3: [],
+      top_constructor: null,
+      reason: `No OpenF1 meeting found for season ${season} round ${round}.`
+    };
+  }
+
+  const sessions = (await fetchOpenF1Soft('sessions', { meeting_key: meeting.meeting_key }))
+    .slice()
+    .sort((a, b) => toEpochMs(b.date_start) - toEpochMs(a.date_start));
+
+  if (!sessions.length) {
+    return {
+      meeting: {
+        key: meeting.meeting_key,
+        name: meeting.meeting_name || null
+      },
+      session: null,
+      source: null,
+      top3: [],
+      top_constructor: null,
+      reason: 'No sessions published for this meeting yet.'
+    };
+  }
+
+  const now = Date.now();
+  const activeWindowMs = 6 * 60 * 60 * 1000;
+  const startedSessions = sessions.filter((row) => {
+    const epoch = toEpochMs(row?.date_start);
+    if (epoch === null) return true;
+    return epoch <= (now + activeWindowMs);
+  });
+  const candidates = startedSessions.length ? startedSessions : sessions;
+
+  for (const session of candidates) {
+    const sessionKey = toInt(session?.session_key);
+    if (!sessionKey) continue;
+
+    const [driverRows, resultRows] = await Promise.all([
+      fetchOpenF1Soft('drivers', { session_key: sessionKey }),
+      fetchOpenF1Soft('session_result', { session_key: sessionKey })
+    ]);
+
+    const metaByNumber = new Map();
+    for (const row of driverRows || []) {
+      const driverNumber = toInt(row?.driver_number);
+      if (!driverNumber) continue;
+      metaByNumber.set(driverNumber, row);
+    }
+
+    let source = 'session_result';
+    let rankedRows = buildSessionRowsFromResult(resultRows, metaByNumber);
+
+    if (rankedRows.length < 3) {
+      const lapRows = await fetchOpenF1Soft('laps', { session_key: sessionKey });
+      const lapRanked = buildSessionRowsFromLaps(lapRows, metaByNumber);
+      if (lapRanked.length) {
+        rankedRows = lapRanked;
+        source = 'laps';
+      }
+    }
+
+    if (!rankedRows.length) continue;
+
+    const topConstructor = summarizeTopConstructorFromSessionRows(rankedRows);
+
+    return {
+      meeting: {
+        key: meeting.meeting_key,
+        name: meeting.meeting_name || null
+      },
+      session: {
+        key: sessionKey,
+        name: session.session_name || session.session_type || `Session ${sessionKey}`,
+        type: session.session_type || null,
+        date_start: session.date_start || null
+      },
+      source,
+      top3: rankedRows.slice(0, 3).map((row) => ({
+        position: row.position,
+        driverName: row.driverName,
+        team: row.team || null
+      })),
+      top_constructor: topConstructor
+        ? {
+            team: topConstructor.team,
+            avg_position: roundTo(topConstructor.avgPos, 2),
+            best_position: topConstructor.bestPos,
+            drivers_counted: topConstructor.count
+          }
+        : null,
+      reason: null
+    };
+  }
+
+  return {
+    meeting: {
+      key: meeting.meeting_key,
+      name: meeting.meeting_name || null
+    },
+    session: null,
+    source: null,
+    top3: [],
+    top_constructor: null,
+    reason: 'No ranked data available yet in OpenF1 for started sessions.'
+  };
+}
+
 
 async function importOpenF1Round({ season, round }) {
   const data = loadDb();
@@ -7253,6 +7499,37 @@ app.get('/api/projections', async (req, res, next) => {
     payload.testing_sync = testingSync;
     res.json(payload);
   } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/openf1/latest-session', async (req, res, next) => {
+  const season = requireSeason(req.query.season);
+  const round = requireRound(req.query.round);
+  try {
+    const payload = await buildOpenF1LatestSessionPulse({ season, round });
+    res.json({
+      ok: Boolean(payload?.top3?.length),
+      season,
+      round,
+      ...payload
+    });
+  } catch (error) {
+    const message = String(error?.message || '');
+    if (message.includes('failed (429)') || message.includes('Rate limit exceeded')) {
+      res.json({
+        ok: false,
+        season,
+        round,
+        meeting: null,
+        session: null,
+        source: null,
+        top3: [],
+        top_constructor: null,
+        reason: 'OpenF1 rate limit reached. Wait ~60 seconds and retry.'
+      });
+      return;
+    }
     next(error);
   }
 });

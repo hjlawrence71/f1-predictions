@@ -13,6 +13,8 @@ const predResults = document.getElementById('predResults');
 const statsTable = document.getElementById('statsTable');
 const statsHighlights = document.getElementById('statsHighlights');
 const weekendFocus = document.getElementById('weekendFocus');
+const projectedPodiumCard = document.getElementById('projectedPodiumCard');
+const latestSessionCard = document.getElementById('latestSessionCard');
 const reviewPanel = document.getElementById('reviewPanel');
 const userFocus = document.getElementById('userFocus');
 const restDriverSelect = document.getElementById('restDriverSelect');
@@ -44,6 +46,7 @@ let statsByDriver = new Map();
 let draftSubmitted = false;
 const reviewProjectionCache = new Map();
 let reviewRenderToken = 0;
+let weekendSignalRenderToken = 0;
 
 const REQUIRED_PICK_KEYS = ['p1', 'p2', 'p3', 'pole', 'fastestLap'];
 const SIDE_BET_FIELDS = [
@@ -116,6 +119,15 @@ function option(label, value) {
   opt.value = value;
   opt.textContent = label;
   return opt;
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
 }
 
 function formatRange(start, end) {
@@ -825,6 +837,137 @@ function renderWeekendFocus() {
   `;
 }
 
+function renderProjectedPodiumSignalCard(projectionPayload) {
+  if (!projectedPodiumCard) return;
+  const raceRows = projectionPayload?.race_projection || [];
+  const top3 = raceRows.slice(0, 3);
+  const roundName = projectionPayload?.race_name || selectedText(roundSelect) || 'Current round';
+  const throughRound = Number(projectionPayload?.context?.through_round || 0);
+
+  if (!top3.length) {
+    projectedPodiumCard.innerHTML = `
+      <div class="weekend-signal-head">
+        <h3>Projected Podium</h3>
+        <span class="chip">No data</span>
+      </div>
+      <div class="muted">Projection model has no podium output for this round yet.</div>
+    `;
+    return;
+  }
+
+  projectedPodiumCard.innerHTML = `
+    <div class="weekend-signal-head">
+      <h3>Projected Podium</h3>
+      <span class="chip">${throughRound ? `Model through R${throughRound}` : 'Projection Lab'}</span>
+    </div>
+    <div class="muted weekend-signal-sub">${escapeHtml(roundName)}</div>
+    <ol class="weekend-signal-list">
+      ${top3.map((row, idx) => `
+        <li class="weekend-signal-item">
+          <span class="weekend-signal-rank">P${idx + 1}</span>
+          <div class="weekend-signal-driver">
+            <strong>${escapeHtml(row.driverName || '—')}</strong>
+            <small>${escapeHtml(row.team || '—')}</small>
+          </div>
+        </li>
+      `).join('')}
+    </ol>
+  `;
+}
+
+function renderLatestSessionSignalCard(sessionPayload) {
+  if (!latestSessionCard) return;
+
+  const top3 = sessionPayload?.top3 || [];
+  const sessionName = sessionPayload?.session?.name || 'Most recent session';
+  const sourceLabel = sessionPayload?.source === 'laps' ? 'Best laps' : 'Session result';
+  const topConstructor = sessionPayload?.top_constructor?.team || null;
+
+  if (!top3.length) {
+    latestSessionCard.innerHTML = `
+      <div class="weekend-signal-head">
+        <h3>Latest Session Pulse</h3>
+        <span class="chip">No data</span>
+      </div>
+      <div class="muted">${escapeHtml(sessionPayload?.reason || 'No OpenF1 session ranking available yet for this weekend.')}</div>
+    `;
+    return;
+  }
+
+  latestSessionCard.innerHTML = `
+    <div class="weekend-signal-head">
+      <h3>Latest Session Pulse</h3>
+      <span class="chip">${escapeHtml(sourceLabel)}</span>
+    </div>
+    <div class="muted weekend-signal-sub">${escapeHtml(sessionName)}</div>
+    <ol class="weekend-signal-list">
+      ${top3.map((row) => `
+        <li class="weekend-signal-item">
+          <span class="weekend-signal-rank">P${Number(row.position || 0)}</span>
+          <div class="weekend-signal-driver">
+            <strong>${escapeHtml(row.driverName || '—')}</strong>
+            <small>${escapeHtml(row.team || '—')}</small>
+          </div>
+        </li>
+      `).join('')}
+    </ol>
+    <div class="weekend-top-team">
+      <span>Top Constructor:</span>
+      <strong>${escapeHtml(topConstructor || '—')}</strong>
+    </div>
+  `;
+}
+
+async function renderWeekendSignalCards() {
+  if (!projectedPodiumCard || !latestSessionCard) return;
+
+  const season = Number(seasonSelect.value || 0);
+  const round = Number(roundSelect.value || 0);
+
+  if (!season || !round) {
+    projectedPodiumCard.innerHTML = `
+      <div class="weekend-signal-head">
+        <h3>Projected Podium</h3>
+        <span class="chip">Waiting</span>
+      </div>
+      <div class="muted">Pick a season and round to load model output.</div>
+    `;
+    latestSessionCard.innerHTML = `
+      <div class="weekend-signal-head">
+        <h3>Latest Session Pulse</h3>
+        <span class="chip">Waiting</span>
+      </div>
+      <div class="muted">Pick a season and round to load OpenF1 session results.</div>
+    `;
+    return;
+  }
+
+  const token = ++weekendSignalRenderToken;
+  projectedPodiumCard.innerHTML = `
+    <div class="weekend-signal-head">
+      <h3>Projected Podium</h3>
+      <span class="chip">Loading</span>
+    </div>
+    <div class="muted">Running model for this weekend...</div>
+  `;
+  latestSessionCard.innerHTML = `
+    <div class="weekend-signal-head">
+      <h3>Latest Session Pulse</h3>
+      <span class="chip">Loading</span>
+    </div>
+    <div class="muted">Fetching latest OpenF1 session ranking...</div>
+  `;
+
+  const [projectionPayload, sessionPayload] = await Promise.all([
+    fetchReviewProjection(season, round, null),
+    fetchJson(`/api/openf1/latest-session?season=${season}&round=${round}`).catch(() => null)
+  ]);
+
+  if (token !== weekendSignalRenderToken) return;
+  renderProjectedPodiumSignalCard(projectionPayload);
+  renderLatestSessionSignalCard(sessionPayload);
+}
+
 function renderUserFocus() {
   if (!userFocus) return;
 
@@ -982,6 +1125,7 @@ function bindInteractionRefresh() {
     draftSubmitted = false;
     refreshReviewAvailability();
     renderWeekendFocus();
+    renderWeekendSignalCards();
     renderUserFocus();
     renderReviewPanel();
     setStep(2);
@@ -992,6 +1136,7 @@ function bindInteractionRefresh() {
     await loadPredictions();
     refreshReviewAvailability();
     renderWeekendFocus();
+    renderWeekendSignalCards();
     renderUserFocus();
     renderReviewPanel();
     setStep(2);
@@ -1004,6 +1149,7 @@ function bindInteractionRefresh() {
     await loadStats();
     refreshReviewAvailability();
     renderWeekendFocus();
+    renderWeekendSignalCards();
     renderUserFocus();
     renderReviewPanel();
     setStep(2);
@@ -1079,6 +1225,7 @@ predForm.addEventListener('submit', savePrediction);
   refreshReviewAvailability();
   setStep(2);
   renderWeekendFocus();
+  await renderWeekendSignalCards();
   renderUserFocus();
   renderReviewPanel();
 })();
