@@ -4,9 +4,13 @@ const kpiGrid = document.getElementById('kpiGrid');
 const standingsTable = document.getElementById('standingsTable');
 const accuracyTable = document.getElementById('accuracyTable');
 const timelineChart = document.getElementById('timelineChart');
-const picksStatus = document.getElementById('picksStatus');
+const seasonPicksStatus = document.getElementById('seasonPicksStatus');
+const seasonSavedPicks = document.getElementById('seasonSavedPicks');
 const seasonSelect = document.getElementById('seasonSelect');
 const tieBreakCard = document.getElementById('tieBreakCard');
+const championshipControlToggle = document.getElementById('championshipControlToggle');
+const championshipControlPanel = document.getElementById('championshipControlPanel');
+const templateEditorDetails = document.getElementById('templateEditorDetails');
 
 const USER_COLORS = ['#e10600', '#0f1724', '#1263e6', '#0f9f8f'];
 const TIE_BREAK_LABELS = {
@@ -61,8 +65,89 @@ function fixed(value, digits = 2) {
   return Number(value || 0).toFixed(digits);
 }
 
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function formatSavedAt(iso) {
+  if (!iso) return 'Not saved yet';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString();
+}
+
+function titleCase(value) {
+  return String(value || '')
+    .replaceAll(/[_-]+/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(' ');
+}
+
+function driverDisplayName(map, rawId) {
+  const id = String(rawId || '').trim();
+  if (!id) return '—';
+  if (map.has(id)) return map.get(id);
+  if (id.startsWith('name:')) return titleCase(id.slice(5));
+  return titleCase(id);
+}
+
+function countFilledValues(value) {
+  if (Array.isArray(value)) {
+    return value.reduce((sum, item) => sum + countFilledValues(item), 0);
+  }
+  if (value && typeof value === 'object') {
+    return Object.values(value).reduce((sum, item) => sum + countFilledValues(item), 0);
+  }
+  if (value === null || value === undefined) return 0;
+  const text = String(value).trim();
+  return text ? 1 : 0;
+}
+
 function selectedSeason() {
   return Number(seasonSelect?.value || 2026);
+}
+
+function syncChampionshipControlToggle() {
+  if (!championshipControlToggle || !championshipControlPanel) return;
+  const open = !championshipControlPanel.hidden;
+  championshipControlToggle.setAttribute('aria-expanded', String(open));
+  championshipControlToggle.textContent = open ? 'Hide Championship Control' : 'Championship Control';
+}
+
+function openChampionshipControlPanel() {
+  if (!championshipControlPanel) return;
+  championshipControlPanel.hidden = false;
+  syncChampionshipControlToggle();
+}
+
+function closeChampionshipControlPanel() {
+  if (!championshipControlPanel) return;
+  championshipControlPanel.hidden = true;
+  syncChampionshipControlToggle();
+}
+
+function revealChampionshipControlFromHash() {
+  if (!championshipControlPanel) return;
+  const hash = String(window.location.hash || '');
+  const shouldOpen = hash === '#championshipControlPanel'
+    || hash === '#templateCompareGrid'
+    || hash === '#templateProjectionGradePanel'
+    || hash === '#templateEditorDetails'
+    || hash === '#picksStatus';
+
+  if (!shouldOpen) return;
+  openChampionshipControlPanel();
+  if (hash === '#templateEditorDetails' && templateEditorDetails) {
+    templateEditorDetails.open = true;
+  }
 }
 
 function renderTieBreakCard(payload) {
@@ -350,26 +435,34 @@ async function loadStandings(season) {
 
   const driverLimit = Math.min(22, standings.driverStandings.length || 22);
   const teamLimit = Math.min(11, standings.constructorStandings.length || 11);
-  const driverRows = standings.driverStandings.slice(0, driverLimit).map(renderDriverItem).join('');
-  const teamRows = standings.constructorStandings.slice(0, teamLimit).map(renderTeamItem).join('');
+  const driverRows = standings.driverStandings.slice(0, driverLimit);
+  const teamRows = standings.constructorStandings.slice(0, teamLimit);
+  const driverPreview = driverRows.slice(0, 3);
+  const teamPreview = teamRows.slice(0, 3);
+
+  const standingsPanel = (title, previewRows, allRows, renderer, rangeLabel) => `
+    <section class="standings-panel">
+      <header class="standings-header">
+        <h3>${title}</h3>
+        <span class="chip">Top ${previewRows.length}</span>
+      </header>
+      <ol class="standings-list standings-mini-list">
+        ${previewRows.map((row, idx) => renderer(row, idx)).join('')}
+      </ol>
+      <details class="history-picks-expand standings-expand">
+        <summary>Expand full grid</summary>
+        <div class="standings-expand-meta">${rangeLabel}</div>
+        <ol class="standings-list standings-full-list">
+          ${allRows.map((row, idx) => renderer(row, idx)).join('')}
+        </ol>
+      </details>
+    </section>
+  `;
 
   standingsTable.innerHTML = `
     <div class="standings-board">
-      <section class="standings-panel">
-        <header class="standings-header">
-          <h3>WDC Standings</h3>
-          <span class="chip">1-${driverLimit}</span>
-        </header>
-        <ol class="standings-list">${driverRows}</ol>
-      </section>
-
-      <section class="standings-panel">
-        <header class="standings-header">
-          <h3>WCC Standings</h3>
-          <span class="chip">1-${teamLimit}</span>
-        </header>
-        <ol class="standings-list">${teamRows}</ol>
-      </section>
+      ${standingsPanel('WDC Standings', driverPreview, driverRows, renderDriverItem, `1-${driverLimit}`)}
+      ${standingsPanel('WCC Standings', teamPreview, teamRows, renderTeamItem, `1-${teamLimit}`)}
     </div>
   `;
 }
@@ -563,10 +656,10 @@ function renderTimeline(data) {
   `;
 }
 
-async function loadPicksStatus(season) {
-  const picks = await fetchJson(`/api/season/picks?season=${season}`);
+function renderPicksStatus(picks, season) {
+  if (!seasonPicksStatus) return;
   if (!picks.length) {
-    picksStatus.textContent = 'No season template picks yet.';
+    seasonPicksStatus.textContent = 'No season template picks yet.';
     return;
   }
 
@@ -578,16 +671,136 @@ async function loadPicksStatus(season) {
       const gradeText = grade?.grade ? `Championship card grade: ${grade.grade}` : 'Championship card grade: —';
       const roundText = grade?.round ? ` · R${grade.round}` : '';
       return `
-        <a class="chip" href="/template.html?season=${season}#projectionGradeCard" title="${gradeText}${roundText}">
+        <a class="chip" href="/season.html?season=${season}#templateProjectionGradePanel" title="${gradeText}${roundText}">
           ${row.user}: ${grade?.grade || '—'}${roundText}
         </a>
       `;
     }).join(' ');
 
-  picksStatus.innerHTML = `
+  seasonPicksStatus.innerHTML = `
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
       <span>Season template saved.</span>
       ${badges}
+    </div>
+  `;
+}
+
+function renderSeasonSavedPicks(picks, season, drivers, users = []) {
+  if (!seasonSavedPicks) return;
+  const safeUsers = (Array.isArray(users) ? users : []).filter(Boolean);
+  if (!safeUsers.length && (!Array.isArray(picks) || !picks.length)) {
+    seasonSavedPicks.innerHTML = '<div class="muted">No championship picks saved yet.</div>';
+    return;
+  }
+
+  const picksByUser = new Map((Array.isArray(picks) ? picks : [])
+    .filter((row) => row?.user)
+    .map((row) => [row.user, row]));
+
+  const sortedUsers = (safeUsers.length ? safeUsers : [...picksByUser.keys()])
+    .sort((a, b) => String(a).localeCompare(String(b)));
+
+  const sorted = sortedUsers.map((user) => picksByUser.get(user) || { user, __missing: true });
+  const driverMap = new Map((drivers || []).map((row) => [row.driverId, row.driverName]));
+
+  const rankListHtml = (rows, type) => {
+    const list = Array.isArray(rows) ? rows.slice(0, 5) : [];
+    if (!list.length) return '<div class="muted">Not set</div>';
+    return `
+      <ol class="season-saved-rank-list">
+        ${list.map((item, idx) => {
+          const label = type === 'driver'
+            ? driverDisplayName(driverMap, item)
+            : String(item || '—');
+          return `
+            <li>
+              <span class="season-saved-rank-num">P${idx + 1}</span>
+              <span>${escapeHtml(label)}</span>
+            </li>
+          `;
+        }).join('')}
+      </ol>
+    `;
+  };
+
+  seasonSavedPicks.innerHTML = `
+    <div class="season-saved-picks-grid">
+      ${sorted.map((row) => {
+        if (row.__missing) {
+          return `
+            <article class="season-saved-card is-empty">
+              <header class="season-saved-head">
+                <div>
+                  <h3>${escapeHtml(row.user)}</h3>
+                  <div class="muted">No championship picks saved yet</div>
+                </div>
+                <div class="season-saved-chips">
+                  <span class="chip">Waiting</span>
+                </div>
+              </header>
+              <div class="muted">Use Championship Control below to save full picks for this user.</div>
+            </article>
+          `;
+        }
+
+        const grade = row?.projection_grade || null;
+        const gradeChip = grade?.grade ? `<span class="chip red">Grade ${escapeHtml(String(grade.grade))}</span>` : '<span class="chip">Grade —</span>';
+        const expectedChip = grade?.expected_points !== undefined
+          ? `<span class="chip">${Number(grade.expected_points || 0).toFixed(1)} xPts</span>`
+          : '';
+        const filled = countFilledValues({
+          driverChampion: row.driver_champion_id,
+          constructorChampion: row.constructor_champion,
+          wdcOrder: row.wdc_order || [],
+          wccOrder: row.wcc_order || [],
+          wdcBonus: row.wdc_bonus || {},
+          wccBonus: row.wcc_bonus || {},
+          outOfBox: row.out_of_box || {},
+          chaos: row.chaos || {},
+          bigBrain: row.big_brain || {},
+          bingo: row.bingo || {},
+          curses: row.curses || {}
+        });
+        return `
+          <article class="season-saved-card">
+            <header class="season-saved-head">
+              <div>
+                <h3>${escapeHtml(row.user)}</h3>
+                <div class="muted">Saved ${escapeHtml(formatSavedAt(row.updated_at || row.created_at))}</div>
+              </div>
+              <div class="season-saved-chips">
+                <span class="chip">${filled} fields</span>
+                ${gradeChip}
+                ${expectedChip}
+              </div>
+            </header>
+
+            <div class="season-saved-champ-grid">
+              <div>
+                <span class="eyebrow">Driver Champion</span>
+                <strong>${escapeHtml(driverDisplayName(driverMap, row.driver_champion_id))}</strong>
+              </div>
+              <div>
+                <span class="eyebrow">Constructor Champion</span>
+                <strong>${escapeHtml(String(row.constructor_champion || '—'))}</strong>
+              </div>
+            </div>
+
+            <div class="season-saved-orders">
+              <section>
+                <span class="eyebrow">WDC Top 5</span>
+                ${rankListHtml(row.wdc_order, 'driver')}
+              </section>
+              <section>
+                <span class="eyebrow">WCC Top 5</span>
+                ${rankListHtml(row.wcc_order, 'team')}
+              </section>
+            </div>
+
+            <a class="btn ghost" href="#templateEditorDetails">Open championship editor</a>
+          </article>
+        `;
+      }).join('')}
     </div>
   `;
 }
@@ -597,22 +810,39 @@ async function refreshAll() {
   const season = selectedSeason();
   await loadStandings(season);
 
-  const [weeklyStats, accuracyRows, timeline, tieBreak] = await Promise.all([
+  const [weeklyStats, accuracyRows, timeline, tieBreak, picks, drivers, config] = await Promise.all([
     fetchJson(`/api/weekly/stats?season=${season}`),
     fetchJson(`/api/season/accuracy?season=${season}`),
     fetchJson(`/api/season/timeline?season=${season}`),
-    fetchJson(`/api/season/tiebreak?season=${season}`)
+    fetchJson(`/api/season/tiebreak?season=${season}`),
+    fetchJson(`/api/season/picks?season=${season}`),
+    fetchJson(`/api/drivers?season=${season}`),
+    fetchJson('/api/config')
   ]);
 
   renderTrendCards(weeklyStats, accuracyRows, timeline);
   renderTieBreakCard(tieBreak);
   renderAccuracyMomentum(accuracyRows, timeline);
   renderTimeline(timeline);
-  await loadPicksStatus(season);
+  renderPicksStatus(picks, season);
+  renderSeasonSavedPicks(picks, season, drivers, config?.users || []);
 }
 
 
 (async function init() {
+  if (championshipControlToggle && championshipControlPanel) {
+    championshipControlToggle.addEventListener('click', () => {
+      if (championshipControlPanel.hidden) {
+        openChampionshipControlPanel();
+      } else {
+        closeChampionshipControlPanel();
+      }
+    });
+    syncChampionshipControlToggle();
+    window.addEventListener('hashchange', revealChampionshipControlFromHash);
+    revealChampionshipControlFromHash();
+  }
+
   bindMetricHelpTooltips(document);
   await loadSeasons();
   if (seasonSelect) seasonSelect.addEventListener('change', refreshAll);

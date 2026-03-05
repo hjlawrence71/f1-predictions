@@ -7862,10 +7862,10 @@ app.get('/api/weekly/stats', (req, res) => {
   for (const pred of data.predictions.filter(p => p.season === season)) {
     if (pred.p1_driver_id) winnerCounts[pred.p1_driver_id] = (winnerCounts[pred.p1_driver_id] || 0) + 1;
   }
-  const mostPickedWinners = drivers
+  const winnerFrequency = drivers
     .map(d => ({ driverId: d.driverId, driverName: d.driverName, team: d.team, picks: winnerCounts[d.driverId] || 0 }))
-    .sort((a, b) => b.picks - a.picks || a.driverName.localeCompare(b.driverName))
-    .slice(0, 5);
+    .sort((a, b) => b.picks - a.picks || a.driverName.localeCompare(b.driverName));
+  const mostPickedWinners = winnerFrequency.slice(0, 5);
 
   const delta = {};
   if (seasonTotals.length === 2) {
@@ -7877,6 +7877,7 @@ app.get('/api/weekly/stats', (req, res) => {
     perRound,
     seasonTotals,
     pickFrequency,
+    winnerFrequency,
     mostPickedWinners,
     delta
   });

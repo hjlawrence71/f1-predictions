@@ -52,56 +52,82 @@ function selectedSeason() {
   return Number.isFinite(picked) && picked > 0 ? picked : 2026;
 }
 
-function renderDriverStats(rows) {
-  if (!driverStats) return;
-  const items = rows.map((r, idx) => `
-    <li class="standing-item team-tone-card" style="${teamToneVars(r.team)}">
-      <span class="standing-rank">${idx + 1}</span>
-      <div class="standing-main">
-        <div class="standing-name team-tone-text" style="${teamToneVars(r.team)}">${r.driverName}</div>
-        <div class="standing-sub">${logoFor(r.team)}${r.team}</div>
-      </div>
-      <div class="standing-points">${r.picks}<span>picks</span></div>
-    </li>
-  `).join('');
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
 
-  driverStats.innerHTML = `
-    <div class="standings-board stats-board-single">
-      <section class="standings-panel">
-        <header class="standings-header">
-          <h3>Driver Pick Frequency</h3>
-          <span class="chip">All drivers</span>
+function renderCompactHistoryCard(target, config) {
+  if (!target) return;
+  const rows = Array.isArray(config.rows) ? config.rows : [];
+  const topRows = rows.slice(0, 3);
+  const units = config.units || 'picks';
+
+  if (!rows.length) {
+    target.innerHTML = `
+      <article class="history-picks-card">
+        <header class="history-picks-head">
+          <h3>${escapeHtml(config.title)}</h3>
+          <span class="chip">${escapeHtml(config.subtitle || 'Top 3')}</span>
         </header>
-        <ol class="standings-list">${items}</ol>
-      </section>
-    </div>
+        <div class="muted">No picks yet.</div>
+      </article>
+    `;
+    return;
+  }
+
+  const rowHtml = (row, idx) => `
+    <li class="history-picks-row">
+      <span class="history-picks-rank">#${idx + 1}</span>
+      <div class="history-picks-driver">
+        <strong class="team-tone-text" style="${teamToneVars(row.team)}">${escapeHtml(row.driverName)}</strong>
+        <span class="history-picks-team">${logoFor(row.team)}${escapeHtml(row.team)}</span>
+      </div>
+      <span class="history-picks-value">${Number(row.picks || 0)} ${escapeHtml(units)}</span>
+    </li>
+  `;
+
+  target.innerHTML = `
+    <article class="history-picks-card">
+      <header class="history-picks-head">
+        <h3>${escapeHtml(config.title)}</h3>
+        <span class="chip">${escapeHtml(config.subtitle || 'Top 3')}</span>
+      </header>
+
+      <ol class="history-picks-toplist">
+        ${topRows.map((row, idx) => rowHtml(row, idx)).join('')}
+      </ol>
+
+      <details class="history-picks-expand">
+        <summary>Expand full grid</summary>
+        <ol class="history-picks-fulllist">
+          ${rows.map((row, idx) => rowHtml(row, idx)).join('')}
+        </ol>
+      </details>
+    </article>
   `;
 }
 
-function renderMostPickedWinners(rows) {
-  if (!mostPickedWinners) return;
-  const items = rows.map((r, idx) => `
-    <li class="standing-item team-tone-card" style="${teamToneVars(r.team)}">
-      <span class="standing-rank">${idx + 1}</span>
-      <div class="standing-main">
-        <div class="standing-name team-tone-text" style="${teamToneVars(r.team)}">${r.driverName}</div>
-        <div class="standing-sub">${logoFor(r.team)}${r.team}</div>
-      </div>
-      <div class="standing-points">${r.picks}<span>P1 picks</span></div>
-    </li>
-  `).join('');
+function renderDriverStats(rows) {
+  renderCompactHistoryCard(driverStats, {
+    title: 'Most Picked Drivers',
+    subtitle: 'Top 3 overall',
+    rows,
+    units: 'picks'
+  });
+}
 
-  mostPickedWinners.innerHTML = `
-    <div class="standings-board stats-board-single" style="margin-top:12px;">
-      <section class="standings-panel">
-        <header class="standings-header">
-          <h3>Most Picked Winners</h3>
-          <span class="chip">Top 5</span>
-        </header>
-        <ol class="standings-list">${items}</ol>
-      </section>
-    </div>
-  `;
+function renderMostPickedWinners(rows) {
+  renderCompactHistoryCard(mostPickedWinners, {
+    title: 'Most Picked Winners',
+    subtitle: 'Top 3 P1 calls',
+    rows,
+    units: 'P1'
+  });
 }
 
 function driverNameMap(stats) {
@@ -353,9 +379,9 @@ async function loadAll() {
 
   const stats = await fetchJson(`/api/weekly/stats?season=${season}`);
   renderDriverStats(stats.pickFrequency);
-  renderMostPickedWinners(stats.mostPickedWinners);
+  renderMostPickedWinners(stats.winnerFrequency || stats.mostPickedWinners || []);
 
-  const drivers = await fetchJson('/api/drivers');
+  const drivers = await fetchJson(`/api/drivers?season=${season}`);
   const map = driverNameMap(drivers);
   setupExplorerRoundDetails(stats.perRound, map);
 }
