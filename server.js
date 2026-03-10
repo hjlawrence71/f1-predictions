@@ -116,15 +116,38 @@ const SEASON_STANDINGS_SCORING = Object.freeze({
   wccExact: 6
 });
 
+const QUAL_PICK_POSITIONS = Object.freeze([1, 2, 3, 4, 5]);
+const RACE_PICK_POSITIONS = Object.freeze([1, 2, 3, 4, 5]);
+
+const QUAL_PICK_FIELDS = Object.freeze(
+  QUAL_PICK_POSITIONS.map((position) => `qual_p${position}_driver_id`)
+);
+
+const RACE_PICK_FIELDS = Object.freeze(
+  RACE_PICK_POSITIONS.map((position) => `race_p${position}_driver_id`)
+);
+
+const POSITION_PICK_FIELDS = Object.freeze([
+  ...QUAL_PICK_FIELDS,
+  ...RACE_PICK_FIELDS
+]);
+
+const POSITION_SCORE_FIELDS = Object.freeze([
+  ...QUAL_PICK_POSITIONS.map((position) => `score_qual_p${position}`),
+  ...RACE_PICK_POSITIONS.map((position) => `score_race_p${position}`)
+]);
+
 const WEEKLY_PICK_SCORING = Object.freeze({
-  p1: 1,
-  p2: 1,
-  p3: 1,
-  pole: 1,
+  qualExact: 1,
+  qualWithinOne: 0.5,
+  raceExact: 1,
+  raceWithinOne: 0.5,
   fastestLap: 1,
   wildcardTop10: 1,
   lockBonus: 1,
-  podiumExactPerSlot: 2
+  podiumExactBonus: 3,
+  podiumAnyOrderBonus3of3: 1,
+  podiumAnyOrderBonus2of3: 0.5
 });
 
 const SEASON_NON_STANDING_FIELD_POINTS = Object.freeze({
@@ -552,6 +575,161 @@ function seedDemoSeasonPicks(data, season, users = getConfiguredUsers()) {
   return users;
 }
 
+function normalizeLockField(lockField) {
+  const key = String(lockField || '').trim();
+  if (!key) return null;
+
+  const aliases = {
+    p1: 'raceP1',
+    p2: 'raceP2',
+    p3: 'raceP3',
+    pole: 'qualP1'
+  };
+
+  return aliases[key] || key;
+}
+
+function ensurePredictionFieldCompatibility(pred) {
+  if (!pred || typeof pred !== 'object') return;
+
+  if (!pred.qual_p1_driver_id) pred.qual_p1_driver_id = pred.pole_driver_id || null;
+  if (!pred.qual_p2_driver_id) pred.qual_p2_driver_id = null;
+  if (!pred.qual_p3_driver_id) pred.qual_p3_driver_id = null;
+  if (!pred.qual_p4_driver_id) pred.qual_p4_driver_id = null;
+  if (!pred.qual_p5_driver_id) pred.qual_p5_driver_id = null;
+
+  if (!pred.race_p1_driver_id) pred.race_p1_driver_id = pred.p1_driver_id || null;
+  if (!pred.race_p2_driver_id) pred.race_p2_driver_id = pred.p2_driver_id || null;
+  if (!pred.race_p3_driver_id) pred.race_p3_driver_id = pred.p3_driver_id || null;
+  if (!pred.race_p4_driver_id) pred.race_p4_driver_id = null;
+  if (!pred.race_p5_driver_id) pred.race_p5_driver_id = null;
+
+  pred.pole_driver_id = pred.qual_p1_driver_id || null;
+  pred.p1_driver_id = pred.race_p1_driver_id || null;
+  pred.p2_driver_id = pred.race_p2_driver_id || null;
+  pred.p3_driver_id = pred.race_p3_driver_id || null;
+
+  if (!('score_qual_p1' in pred)) pred.score_qual_p1 = Number(pred.score_pole || 0);
+  if (!('score_qual_p2' in pred)) pred.score_qual_p2 = 0;
+  if (!('score_qual_p3' in pred)) pred.score_qual_p3 = 0;
+  if (!('score_qual_p4' in pred)) pred.score_qual_p4 = 0;
+  if (!('score_qual_p5' in pred)) pred.score_qual_p5 = 0;
+
+  if (!('score_race_p1' in pred)) pred.score_race_p1 = Number(pred.score_p1 || 0);
+  if (!('score_race_p2' in pred)) pred.score_race_p2 = Number(pred.score_p2 || 0);
+  if (!('score_race_p3' in pred)) pred.score_race_p3 = Number(pred.score_p3 || 0);
+  if (!('score_race_p4' in pred)) pred.score_race_p4 = 0;
+  if (!('score_race_p5' in pred)) pred.score_race_p5 = 0;
+
+  if (!('score_podium_bonus' in pred)) {
+    pred.score_podium_bonus = Number(pred.podium_exact ? WEEKLY_PICK_SCORING.podiumExactBonus : 0);
+  }
+
+  pred.lock_field = normalizeLockField(pred.lock_field);
+}
+
+function buildPositionMap(rows) {
+  const map = new Map();
+  for (const row of rows || []) {
+    if (!row?.driverId) continue;
+    const position = toInt(row.position);
+    if (!position) continue;
+    map.set(row.driverId, position);
+  }
+  return map;
+}
+
+function buildTopN(rows, count = 5) {
+  const sorted = [...(rows || [])]
+    .filter((row) => toInt(row?.position))
+    .sort((a, b) => toInt(a.position) - toInt(b.position));
+  return Array.from({ length: count }, (_, idx) => sorted[idx]?.driverId || null);
+}
+
+function roundOutcomeContext(data, season, round) {
+  const qualRows = (data.qualifying_results || []).filter((row) => row.season === season && row.round === round);
+  const raceRows = (data.race_results || []).filter((row) => row.season === season && row.round === round);
+  const actual = (data.race_actuals || []).find((row) => row.season === season && row.round === round) || null;
+
+  const qualPosByDriver = buildPositionMap(qualRows);
+  const racePosByDriver = buildPositionMap(raceRows);
+  const qualTop5 = buildTopN(qualRows, 5);
+  const raceTop5 = buildTopN(raceRows, 5);
+  if (!qualTop5[0] && actual?.pole_driver_id) qualTop5[0] = actual.pole_driver_id;
+  if (!raceTop5[0] && actual?.p1_driver_id) raceTop5[0] = actual.p1_driver_id;
+  if (!raceTop5[1] && actual?.p2_driver_id) raceTop5[1] = actual.p2_driver_id;
+  if (!raceTop5[2] && actual?.p3_driver_id) raceTop5[2] = actual.p3_driver_id;
+  const poleDriverId = actual?.pole_driver_id || qualTop5[0] || null;
+  const fastestLapDriverId = actual?.fastest_lap_driver_id ||
+    raceRows.find((row) => toInt(row.fastestLapRank) === 1)?.driverId ||
+    null;
+
+  return {
+    season,
+    round,
+    actual,
+    qualRows,
+    raceRows,
+    qualPosByDriver,
+    racePosByDriver,
+    qualTop5,
+    raceTop5,
+    poleDriverId,
+    fastestLapDriverId
+  };
+}
+
+function scorePositionalSlot(pickDriverId, targetPosition, positionByDriver, exactPoints, nearPoints) {
+  if (!pickDriverId) return 0;
+  const actualPosition = Number(positionByDriver?.get(pickDriverId));
+  if (!Number.isFinite(actualPosition)) return 0;
+  if (actualPosition === targetPosition) return Number(exactPoints || 0);
+  if (Math.abs(actualPosition - targetPosition) === 1) return Number(nearPoints || 0);
+  return 0;
+}
+
+function scorePodiumBonus(pred, context) {
+  const picks = [
+    pred?.race_p1_driver_id || null,
+    pred?.race_p2_driver_id || null,
+    pred?.race_p3_driver_id || null
+  ];
+  const actual = [context?.raceTop5?.[0] || null, context?.raceTop5?.[1] || null, context?.raceTop5?.[2] || null];
+
+  if (!picks.every(Boolean) || !actual.every(Boolean)) {
+    return { podium_exact: 0, podium_match_count: 0, score_podium_bonus: 0 };
+  }
+
+  const exact = picks[0] === actual[0] && picks[1] === actual[1] && picks[2] === actual[2];
+  const matchCount = picks.filter((id) => actual.includes(id)).length;
+
+  if (exact) {
+    return {
+      podium_exact: 1,
+      podium_match_count: 3,
+      score_podium_bonus: WEEKLY_PICK_SCORING.podiumExactBonus
+    };
+  }
+
+  if (matchCount >= 3) {
+    return {
+      podium_exact: 0,
+      podium_match_count: 3,
+      score_podium_bonus: WEEKLY_PICK_SCORING.podiumAnyOrderBonus3of3
+    };
+  }
+
+  if (matchCount === 2) {
+    return {
+      podium_exact: 0,
+      podium_match_count: 2,
+      score_podium_bonus: WEEKLY_PICK_SCORING.podiumAnyOrderBonus2of3
+    };
+  }
+
+  return { podium_exact: 0, podium_match_count: matchCount, score_podium_bonus: 0 };
+}
+
 function loadDb() {
   if (!fs.existsSync(DB_PATH)) {
     return {
@@ -588,6 +766,8 @@ function loadDb() {
   }
 
   for (const pred of data.predictions || []) {
+    ensurePredictionFieldCompatibility(pred);
+
     if (!('wildcard_text' in pred)) pred.wildcard_text = '';
     if (!('wildcard_result' in pred)) pred.wildcard_result = null;
     if (!('wildcard_scored_by' in pred)) pred.wildcard_scored_by = null;
@@ -595,6 +775,7 @@ function loadDb() {
     if (!('lock_field' in pred)) pred.lock_field = null;
     if (!('score_lock' in pred)) pred.score_lock = 0;
     if (!('podium_exact' in pred)) pred.podium_exact = 0;
+    if (!('podium_match_count' in pred)) pred.podium_match_count = 0;
 
     if (!('sidebet_pole_converts' in pred)) pred.sidebet_pole_converts = null;
     if (!('sidebet_front_row_winner' in pred)) pred.sidebet_front_row_winner = null;
@@ -618,6 +799,16 @@ function loadDb() {
     if (!('score_sidebet_big_mover' in pred)) pred.score_sidebet_big_mover = 0;
     if (!('score_sidebet_other7_podium' in pred)) pred.score_sidebet_other7_podium = ('score_sidebet_double_dnf' in pred) ? Number(pred.score_sidebet_double_dnf || 0) : 0;
     if (!('score_sidebets_total' in pred)) pred.score_sidebets_total = 0;
+
+    for (const scoreField of POSITION_SCORE_FIELDS) {
+      if (!(scoreField in pred)) pred[scoreField] = 0;
+      pred[scoreField] = Number(pred[scoreField] || 0);
+    }
+    if (!('score_podium_bonus' in pred)) pred.score_podium_bonus = 0;
+    pred.score_podium_bonus = Number(pred.score_podium_bonus || 0);
+    pred.score_lock = Number(pred.score_lock || 0);
+    pred.score_wildcard = Number(pred.score_wildcard || 0);
+    pred.score_sidebets_total = Number(pred.score_sidebets_total || 0);
   }
   for (const sp of data.season_predictions || []) {
     if (!('wdc_order' in sp)) sp.wdc_order = [];
@@ -1679,22 +1870,44 @@ function resolveWildcardHit(pred, data, wildcardRule = loadConfig().wildcardRule
   );
 }
 
-function predictionAccuracySummary(pred, actual, sideBetActuals, data, wildcardRule = loadConfig().wildcardRule) {
+function predictionAccuracySummary(pred, context, sideBetActuals, data, wildcardRule = loadConfig().wildcardRule) {
+  ensurePredictionFieldCompatibility(pred);
   let correct = 0;
   let attempted = 0;
 
-  const pickPairs = [
-    ['p1_driver_id', actual?.p1_driver_id],
-    ['p2_driver_id', actual?.p2_driver_id],
-    ['p3_driver_id', actual?.p3_driver_id],
-    ['pole_driver_id', actual?.pole_driver_id],
-    ['fastest_lap_driver_id', actual?.fastest_lap_driver_id]
-  ];
-
-  for (const [pickField, actualId] of pickPairs) {
-    if (!pred?.[pickField] || !actualId) continue;
+  for (const position of QUAL_PICK_POSITIONS) {
+    const pickField = `qual_p${position}_driver_id`;
+    const pickDriverId = pred?.[pickField] || null;
+    if (!pickDriverId || !context?.qualPosByDriver?.size) continue;
     attempted += 1;
-    if (pred[pickField] === actualId) correct += 1;
+    correct += scorePositionalSlot(
+      pickDriverId,
+      position,
+      context.qualPosByDriver,
+      WEEKLY_PICK_SCORING.qualExact,
+      WEEKLY_PICK_SCORING.qualWithinOne
+    );
+  }
+
+  for (const position of RACE_PICK_POSITIONS) {
+    const pickField = `race_p${position}_driver_id`;
+    const pickDriverId = pred?.[pickField] || null;
+    if (!pickDriverId || !context?.racePosByDriver?.size) continue;
+    attempted += 1;
+    correct += scorePositionalSlot(
+      pickDriverId,
+      position,
+      context.racePosByDriver,
+      WEEKLY_PICK_SCORING.raceExact,
+      WEEKLY_PICK_SCORING.raceWithinOne
+    );
+  }
+
+  if (pred?.fastest_lap_driver_id && context?.fastestLapDriverId) {
+    attempted += 1;
+    if (pred.fastest_lap_driver_id === context.fastestLapDriverId) {
+      correct += WEEKLY_PICK_SCORING.fastestLap;
+    }
   }
 
   const wildcardAttempted = Boolean(pred?.wildcard_text || pred?.wildcard_driver_id);
@@ -5054,9 +5267,11 @@ function evaluatePickLikelihood(data, season, round, user, projectionTable, simR
       message: 'No saved picks for this user and round yet.'
     };
   }
+  ensurePredictionFieldCompatibility(prediction);
 
   const rowByDriver = new Map((projectionTable.raceRows || []).map((row) => [row.driverId, row]));
   const qualByDriver = new Map((projectionTable.qualifyingRows || []).map((row) => [row.driverId, row]));
+  const fieldSize = Number(simResult?.fieldSize || projectionTable?.raceRows?.length || 22);
 
   const raceProb = (driverId, position) => {
     const row = rowByDriver.get(driverId);
@@ -5074,50 +5289,115 @@ function evaluatePickLikelihood(data, season, round, user, projectionTable, simR
     return Number(row?.pole_probability || 0);
   };
 
+  const qualPosProb = (driverId, position) => {
+    const raceRow = rowByDriver.get(driverId);
+    if (raceRow) {
+      return Number(raceRow.qualifying_probabilities_by_position?.[position] || 0);
+    }
+    if (position === 1) return poleProb(driverId);
+    return 0;
+  };
+
   const fastestProb = (driverId) => {
     const row = rowByDriver.get(driverId);
     return Number(row?.probabilities?.fastest_lap || 0);
   };
 
-  const p1Prob = raceProb(prediction.p1_driver_id, 1);
-  const p2Prob = raceProb(prediction.p2_driver_id, 2);
-  const p3Prob = raceProb(prediction.p3_driver_id, 3);
-  const poleHitProb = poleProb(prediction.pole_driver_id);
+  const positionalSlotModel = (pickType, position, driverId) => {
+    if (!driverId) return { exactProb: 0, nearProb: 0, scoringProb: 0, expectedPoints: 0 };
+    const baseProb = pickType === 'qual' ? qualPosProb : raceProb;
+
+    const exactProb = baseProb(driverId, position);
+    const nearCandidates = [position - 1, position + 1].filter((pos) => pos >= 1 && pos <= fieldSize);
+    const nearProb = nearCandidates.reduce((sum, pos) => sum + baseProb(driverId, pos), 0);
+    const scoringProb = Math.max(0, Math.min(1, exactProb + nearProb));
+    const expectedPoints =
+      (exactProb * (pickType === 'qual' ? WEEKLY_PICK_SCORING.qualExact : WEEKLY_PICK_SCORING.raceExact)) +
+      (nearProb * (pickType === 'qual' ? WEEKLY_PICK_SCORING.qualWithinOne : WEEKLY_PICK_SCORING.raceWithinOne));
+
+    return { exactProb, nearProb, scoringProb, expectedPoints };
+  };
+
+  const qualSlots = QUAL_PICK_POSITIONS.map((position) => {
+    const driverId = prediction[`qual_p${position}_driver_id`] || null;
+    const model = positionalSlotModel('qual', position, driverId);
+    return { key: `qualP${position}`, driverId, ...model };
+  });
+
+  const raceSlots = RACE_PICK_POSITIONS.map((position) => {
+    const driverId = prediction[`race_p${position}_driver_id`] || null;
+    const model = positionalSlotModel('race', position, driverId);
+    return { key: `raceP${position}`, driverId, ...model };
+  });
+
   const fastestHitProb = fastestProb(prediction.fastest_lap_driver_id);
   const wildcardHitProb = prediction.wildcard_driver_id ? top10Prob(prediction.wildcard_driver_id) : 0;
 
-  const podiumExactKey = [prediction.p1_driver_id, prediction.p2_driver_id, prediction.p3_driver_id].every(Boolean)
-    ? [prediction.p1_driver_id, prediction.p2_driver_id, prediction.p3_driver_id].join('|')
+  const racePodiumPick = [
+    prediction.race_p1_driver_id,
+    prediction.race_p2_driver_id,
+    prediction.race_p3_driver_id
+  ];
+
+  const podiumExactKey = racePodiumPick.every(Boolean)
+    ? racePodiumPick.join('|')
     : null;
 
   const podiumExactProb = podiumExactKey
     ? (simResult.podiumOrderCounts.get(podiumExactKey) || 0) / simResult.runs
     : 0;
 
+  let podiumAnyOrderProb = 0;
+  let podiumTwoOfThreeProb = 0;
+
+  if (racePodiumPick.every(Boolean)) {
+    const pickSet = new Set(racePodiumPick);
+    for (const [orderKey, count] of simResult.podiumOrderCounts || new Map()) {
+      if (!count) continue;
+      const actual = String(orderKey || '').split('|');
+      if (actual.length !== 3) continue;
+      const overlap = actual.filter((id) => pickSet.has(id)).length;
+      if (overlap === 3) podiumAnyOrderProb += count;
+      else if (overlap === 2) podiumTwoOfThreeProb += count;
+    }
+    podiumAnyOrderProb = simResult.runs ? podiumAnyOrderProb / simResult.runs : 0;
+    podiumTwoOfThreeProb = simResult.runs ? podiumTwoOfThreeProb / simResult.runs : 0;
+    podiumAnyOrderProb = Math.max(0, podiumAnyOrderProb - podiumExactProb);
+  }
+
+  const expectedPodiumBonus =
+    (podiumExactProb * WEEKLY_PICK_SCORING.podiumExactBonus) +
+    (podiumAnyOrderProb * WEEKLY_PICK_SCORING.podiumAnyOrderBonus3of3) +
+    (podiumTwoOfThreeProb * WEEKLY_PICK_SCORING.podiumAnyOrderBonus2of3);
+
   const lockFieldMap = {
-    p1: p1Prob,
-    p2: p2Prob,
-    p3: p3Prob,
-    pole: poleHitProb,
+    qualP1: qualSlots[0]?.scoringProb || 0,
+    qualP2: qualSlots[1]?.scoringProb || 0,
+    qualP3: qualSlots[2]?.scoringProb || 0,
+    qualP4: qualSlots[3]?.scoringProb || 0,
+    qualP5: qualSlots[4]?.scoringProb || 0,
+    raceP1: raceSlots[0]?.scoringProb || 0,
+    raceP2: raceSlots[1]?.scoringProb || 0,
+    raceP3: raceSlots[2]?.scoringProb || 0,
+    raceP4: raceSlots[3]?.scoringProb || 0,
+    raceP5: raceSlots[4]?.scoringProb || 0,
+    p1: raceSlots[0]?.scoringProb || 0,
+    p2: raceSlots[1]?.scoringProb || 0,
+    p3: raceSlots[2]?.scoringProb || 0,
+    pole: qualSlots[0]?.scoringProb || 0,
     fastestLap: fastestHitProb
   };
 
-  const lockHitProb = prediction.lock_field ? Number(lockFieldMap[prediction.lock_field] || 0) : 0;
+  const normalizedLockField = normalizeLockField(prediction.lock_field);
+  const lockHitProb = normalizedLockField ? Number(lockFieldMap[normalizedLockField] || 0) : 0;
 
-  const expectedPoints =
-    (p1Prob + podiumExactProb) +
-    (p2Prob + podiumExactProb) +
-    (p3Prob + podiumExactProb) +
-    poleHitProb +
-    fastestHitProb +
-    wildcardHitProb +
-    lockHitProb;
+  const expectedQualPoints = qualSlots.reduce((sum, row) => sum + row.expectedPoints, 0);
+  const expectedRacePoints = raceSlots.reduce((sum, row) => sum + row.expectedPoints, 0);
+  const expectedPoints = expectedQualPoints + expectedRacePoints + expectedPodiumBonus + fastestHitProb + wildcardHitProb + lockHitProb;
 
   const categories = [
-    { key: 'p1', driverId: prediction.p1_driver_id, probability: p1Prob },
-    { key: 'p2', driverId: prediction.p2_driver_id, probability: p2Prob },
-    { key: 'p3', driverId: prediction.p3_driver_id, probability: p3Prob },
-    { key: 'pole', driverId: prediction.pole_driver_id, probability: poleHitProb },
+    ...qualSlots.map((row) => ({ key: row.key, driverId: row.driverId, probability: row.scoringProb })),
+    ...raceSlots.map((row) => ({ key: row.key, driverId: row.driverId, probability: row.scoringProb })),
     { key: 'fastestLap', driverId: prediction.fastest_lap_driver_id, probability: fastestHitProb },
     { key: 'wildcard', driverId: prediction.wildcard_driver_id, probability: wildcardHitProb }
   ];
@@ -5127,8 +5407,10 @@ function evaluatePickLikelihood(data, season, round, user, projectionTable, simR
   return {
     user,
     available: true,
-    lock_field: prediction.lock_field || null,
+    lock_field: normalizedLockField || null,
     podium_exact_probability: podiumExactProb,
+    podium_any_order_probability: podiumAnyOrderProb,
+    podium_two_of_three_probability: podiumTwoOfThreeProb,
     lock_hit_probability: lockHitProb,
     expected_points: expectedPoints,
     categories: categories.map((row) => ({
@@ -6483,6 +6765,8 @@ function normalizePredictionIds(data, resolvedGrid) {
 
   for (const pred of data.predictions) {
     for (const key of [
+      ...QUAL_PICK_FIELDS,
+      ...RACE_PICK_FIELDS,
       'p1_driver_id',
       'p2_driver_id',
       'p3_driver_id',
@@ -6543,6 +6827,7 @@ function updateAllPredictionScores(data) {
   const { wildcardRule } = loadConfig();
   const now = new Date().toISOString();
   const sideBetActualCache = new Map();
+  const outcomeCache = new Map();
 
   const sideBetActualsFor = (season, round) => {
     const key = `${season}:${round}`;
@@ -6552,27 +6837,59 @@ function updateAllPredictionScores(data) {
     return sideBetActualCache.get(key);
   };
 
+  const outcomeFor = (season, round) => {
+    const key = `${season}:${round}`;
+    if (!outcomeCache.has(key)) {
+      outcomeCache.set(key, roundOutcomeContext(data, season, round));
+    }
+    return outcomeCache.get(key);
+  };
+
   for (const pred of data.predictions) {
-    const actual = data.race_actuals.find(
-      a => a.season === pred.season && a.round === pred.round
-    );
+    ensurePredictionFieldCompatibility(pred);
+    const outcome = outcomeFor(pred.season, pred.round);
 
-    let score_p1 = actual?.p1_driver_id && pred.p1_driver_id === actual.p1_driver_id ? 1 : 0;
-    let score_p2 = actual?.p2_driver_id && pred.p2_driver_id === actual.p2_driver_id ? 1 : 0;
-    let score_p3 = actual?.p3_driver_id && pred.p3_driver_id === actual.p3_driver_id ? 1 : 0;
-    const score_pole = actual?.pole_driver_id && pred.pole_driver_id === actual.pole_driver_id ? 1 : 0;
-    const score_fastest_lap =
-      actual?.fastest_lap_driver_id && pred.fastest_lap_driver_id === actual.fastest_lap_driver_id ? 1 : 0;
-
-    const podium_exact = score_p1 && score_p2 && score_p3 ? 1 : 0;
-    if (podium_exact) {
-      score_p1 = 2;
-      score_p2 = 2;
-      score_p3 = 2;
+    const scoreQualByPosition = {};
+    for (const position of QUAL_PICK_POSITIONS) {
+      const pickField = `qual_p${position}_driver_id`;
+      const scoreField = `score_qual_p${position}`;
+      const score = scorePositionalSlot(
+        pred[pickField],
+        position,
+        outcome.qualPosByDriver,
+        WEEKLY_PICK_SCORING.qualExact,
+        WEEKLY_PICK_SCORING.qualWithinOne
+      );
+      pred[scoreField] = score;
+      scoreQualByPosition[position] = score;
     }
 
+    const scoreRaceByPosition = {};
+    for (const position of RACE_PICK_POSITIONS) {
+      const pickField = `race_p${position}_driver_id`;
+      const scoreField = `score_race_p${position}`;
+      const score = scorePositionalSlot(
+        pred[pickField],
+        position,
+        outcome.racePosByDriver,
+        WEEKLY_PICK_SCORING.raceExact,
+        WEEKLY_PICK_SCORING.raceWithinOne
+      );
+      pred[scoreField] = score;
+      scoreRaceByPosition[position] = score;
+    }
+
+    const score_fastest_lap =
+      outcome.fastestLapDriverId && pred.fastest_lap_driver_id === outcome.fastestLapDriverId
+        ? WEEKLY_PICK_SCORING.fastestLap
+        : 0;
+
+    const podiumMeta = scorePodiumBonus(pred, outcome);
+    const podium_exact = podiumMeta.podium_exact;
+    const score_podium_bonus = podiumMeta.score_podium_bonus;
+
     const wildcardHit = resolveWildcardHit(pred, data, wildcardRule);
-    const score_wildcard = wildcardHit === true ? 1 : 0;
+    const score_wildcard = wildcardHit === true ? WEEKLY_PICK_SCORING.wildcardTop10 : 0;
 
     let score_lock = 0;
 
@@ -6625,11 +6942,22 @@ function updateAllPredictionScores(data) {
       (pred.score_sidebet_other7_podium || 0);
 
     if (pred.lock_field) {
+      const normalizedLockField = normalizeLockField(pred.lock_field);
       const lockMap = {
-        p1: score_p1,
-        p2: score_p2,
-        p3: score_p3,
-        pole: score_pole,
+        qualP1: scoreQualByPosition[1],
+        qualP2: scoreQualByPosition[2],
+        qualP3: scoreQualByPosition[3],
+        qualP4: scoreQualByPosition[4],
+        qualP5: scoreQualByPosition[5],
+        raceP1: scoreRaceByPosition[1],
+        raceP2: scoreRaceByPosition[2],
+        raceP3: scoreRaceByPosition[3],
+        raceP4: scoreRaceByPosition[4],
+        raceP5: scoreRaceByPosition[5],
+        p1: scoreRaceByPosition[1],
+        p2: scoreRaceByPosition[2],
+        p3: scoreRaceByPosition[3],
+        pole: scoreQualByPosition[1],
         fastestLap: score_fastest_lap,
         sidebetPoleConverts: pred.score_sidebet_pole_converts,
         sidebetFrontRowWinner: pred.score_sidebet_front_row_winner,
@@ -6638,22 +6966,29 @@ function updateAllPredictionScores(data) {
         sidebetBigMover: pred.score_sidebet_big_mover,
         sidebetOther7Podium: pred.score_sidebet_other7_podium
       };
-      if (lockMap[pred.lock_field] && lockMap[pred.lock_field] > 0) score_lock = 1;
+      if (lockMap[normalizedLockField] && lockMap[normalizedLockField] > 0) {
+        score_lock = WEEKLY_PICK_SCORING.lockBonus;
+      }
+      pred.lock_field = normalizedLockField;
     }
 
-    pred.score_p1 = score_p1;
-    pred.score_p2 = score_p2;
-    pred.score_p3 = score_p3;
-    pred.score_pole = score_pole;
+    pred.score_p1 = scoreRaceByPosition[1];
+    pred.score_p2 = scoreRaceByPosition[2];
+    pred.score_p3 = scoreRaceByPosition[3];
+    pred.score_pole = scoreQualByPosition[1];
     pred.score_fastest_lap = score_fastest_lap;
     pred.score_wildcard = score_wildcard;
     pred.score_lock = score_lock;
     pred.podium_exact = podium_exact;
+    pred.podium_match_count = podiumMeta.podium_match_count;
+    pred.score_podium_bonus = score_podium_bonus;
+
+    const qualTotal = QUAL_PICK_POSITIONS.reduce((sum, position) => sum + Number(scoreQualByPosition[position] || 0), 0);
+    const raceTotal = RACE_PICK_POSITIONS.reduce((sum, position) => sum + Number(scoreRaceByPosition[position] || 0), 0);
     pred.score_total =
-      score_p1 +
-      score_p2 +
-      score_p3 +
-      score_pole +
+      qualTotal +
+      raceTotal +
+      score_podium_bonus +
       score_fastest_lap +
       score_wildcard +
       score_lock +
@@ -7337,14 +7672,26 @@ app.post('/api/predictions', (req, res) => {
     text: String(pred.wildcard_text || '').trim()
   });
 
-  pred.p1_driver_id = picks.p1 || null;
-  pred.p2_driver_id = picks.p2 || null;
-  pred.p3_driver_id = picks.p3 || null;
-  pred.pole_driver_id = picks.pole || null;
+  pred.qual_p1_driver_id = picks.qualP1 || picks.pole || null;
+  pred.qual_p2_driver_id = picks.qualP2 || null;
+  pred.qual_p3_driver_id = picks.qualP3 || null;
+  pred.qual_p4_driver_id = picks.qualP4 || null;
+  pred.qual_p5_driver_id = picks.qualP5 || null;
+
+  pred.race_p1_driver_id = picks.raceP1 || picks.p1 || null;
+  pred.race_p2_driver_id = picks.raceP2 || picks.p2 || null;
+  pred.race_p3_driver_id = picks.raceP3 || picks.p3 || null;
+  pred.race_p4_driver_id = picks.raceP4 || null;
+  pred.race_p5_driver_id = picks.raceP5 || null;
+
+  pred.p1_driver_id = pred.race_p1_driver_id;
+  pred.p2_driver_id = pred.race_p2_driver_id;
+  pred.p3_driver_id = pred.race_p3_driver_id;
+  pred.pole_driver_id = pred.qual_p1_driver_id;
   pred.fastest_lap_driver_id = picks.fastestLap || null;
   pred.wildcard_driver_id = picks.wildcard || null;
   pred.wildcard_text = String(picks.wildcardText || '');
-  pred.lock_field = picks.lockField || null;
+  pred.lock_field = normalizeLockField(picks.lockField || null);
 
   const sideBets = (picks.sideBets && typeof picks.sideBets === 'object') ? picks.sideBets : {};
   pred.sidebet_pole_converts = toBoolNullable(sideBets.poleConverts);
@@ -7430,19 +7777,30 @@ app.get('/api/predictions', (req, res) => {
   const round = requireRound(req.query.round);
 
   const data = loadDb();
+  const context = roundOutcomeContext(data, season, round);
   const rows = data.predictions
     .filter(p => p.season === season && p.round === round)
     .sort((a, b) => String(a.user || '').localeCompare(String(b.user || '')))
     .map(p => {
-      const a = data.race_actuals.find(x => x.season === season && x.round === round);
+      ensurePredictionFieldCompatibility(p);
       return {
         ...p,
         actuals: {
-          pole_driver_id: a?.pole_driver_id || null,
-          p1_driver_id: a?.p1_driver_id || null,
-          p2_driver_id: a?.p2_driver_id || null,
-          p3_driver_id: a?.p3_driver_id || null,
-          fastest_lap_driver_id: a?.fastest_lap_driver_id || null
+          pole_driver_id: context.poleDriverId || null,
+          fastest_lap_driver_id: context.fastestLapDriverId || null,
+          qual_p1_driver_id: context.qualTop5[0] || null,
+          qual_p2_driver_id: context.qualTop5[1] || null,
+          qual_p3_driver_id: context.qualTop5[2] || null,
+          qual_p4_driver_id: context.qualTop5[3] || null,
+          qual_p5_driver_id: context.qualTop5[4] || null,
+          race_p1_driver_id: context.raceTop5[0] || null,
+          race_p2_driver_id: context.raceTop5[1] || null,
+          race_p3_driver_id: context.raceTop5[2] || null,
+          race_p4_driver_id: context.raceTop5[3] || null,
+          race_p5_driver_id: context.raceTop5[4] || null,
+          p1_driver_id: context.raceTop5[0] || null,
+          p2_driver_id: context.raceTop5[1] || null,
+          p3_driver_id: context.raceTop5[2] || null
         }
       };
     });
@@ -7903,15 +8261,20 @@ app.get('/api/season/accuracy', (req, res) => {
     let attempted = 0;
 
     for (const pred of preds) {
-      const actual = data.race_actuals.find(a => a.season === season && a.round === pred.round);
+      const context = roundOutcomeContext(data, season, pred.round);
       const sideBetActuals = computeRoundSideBetActuals(data, season, pred.round);
-      const summary = predictionAccuracySummary(pred, actual, sideBetActuals, data, wildcardRule);
+      const summary = predictionAccuracySummary(pred, context, sideBetActuals, data, wildcardRule);
       correct += summary.correct;
       attempted += summary.attempted;
     }
 
     const accuracy = attempted ? correct / attempted : 0;
-    return { user, correct, attempted, accuracy };
+    return {
+      user,
+      correct: Number(correct.toFixed(2)),
+      attempted,
+      accuracy
+    };
   });
 
   res.json(rows);
@@ -7948,14 +8311,16 @@ app.get('/api/weekly/stats', (req, res) => {
   const rounds = schedule.map(r => r.round);
 
   const perRound = schedule.map(r => {
-    const actual = data.race_actuals.find(a => a.season === season && a.round === r.round);
+    const context = roundOutcomeContext(data, season, r.round);
+    const actual = context.actual;
     const sideBetActuals = computeRoundSideBetActuals(data, season, r.round);
     const userRows = users.map(user => {
       const pred = data.predictions.find(p => p.user === user && p.season === season && p.round === r.round);
       if (!pred) return { user, missing: true };
+      ensurePredictionFieldCompatibility(pred);
       const accuracySummary = predictionAccuracySummary(
         pred,
-        actual,
+        context,
         sideBetActuals,
         data,
         wildcardRule
@@ -7963,10 +8328,20 @@ app.get('/api/weekly/stats', (req, res) => {
       return {
         user,
         picks: {
-          p1: pred.p1_driver_id,
-          p2: pred.p2_driver_id,
-          p3: pred.p3_driver_id,
-          pole: pred.pole_driver_id,
+          qual: {
+            p1: pred.qual_p1_driver_id,
+            p2: pred.qual_p2_driver_id,
+            p3: pred.qual_p3_driver_id,
+            p4: pred.qual_p4_driver_id,
+            p5: pred.qual_p5_driver_id
+          },
+          race: {
+            p1: pred.race_p1_driver_id,
+            p2: pred.race_p2_driver_id,
+            p3: pred.race_p3_driver_id,
+            p4: pred.race_p4_driver_id,
+            p5: pred.race_p5_driver_id
+          },
           fastestLap: pred.fastest_lap_driver_id,
           wildcardText: pred.wildcard_text || '',
           sideBets: {
@@ -7979,10 +8354,29 @@ app.get('/api/weekly/stats', (req, res) => {
           }
         },
         points: {
-          p1: pred.score_p1 || 0,
-          p2: pred.score_p2 || 0,
-          p3: pred.score_p3 || 0,
-          pole: pred.score_pole || 0,
+          qualP1: pred.score_qual_p1 || 0,
+          qualP2: pred.score_qual_p2 || 0,
+          qualP3: pred.score_qual_p3 || 0,
+          qualP4: pred.score_qual_p4 || 0,
+          qualP5: pred.score_qual_p5 || 0,
+          raceP1: pred.score_race_p1 || 0,
+          raceP2: pred.score_race_p2 || 0,
+          raceP3: pred.score_race_p3 || 0,
+          raceP4: pred.score_race_p4 || 0,
+          raceP5: pred.score_race_p5 || 0,
+          podiumBonus: pred.score_podium_bonus || 0,
+          qualTotal:
+            (pred.score_qual_p1 || 0) +
+            (pred.score_qual_p2 || 0) +
+            (pred.score_qual_p3 || 0) +
+            (pred.score_qual_p4 || 0) +
+            (pred.score_qual_p5 || 0),
+          raceTotal:
+            (pred.score_race_p1 || 0) +
+            (pred.score_race_p2 || 0) +
+            (pred.score_race_p3 || 0) +
+            (pred.score_race_p4 || 0) +
+            (pred.score_race_p5 || 0),
           fastestLap: pred.score_fastest_lap || 0,
           lock: pred.score_lock || 0,
           wildcard: pred.score_wildcard || 0,
@@ -8005,6 +8399,7 @@ app.get('/api/weekly/stats', (req, res) => {
         },
         lock: pred.lock_field || null,
         podium_exact: pred.podium_exact || 0,
+        podium_match_count: pred.podium_match_count || 0,
         accuracy: accuracySummary.accuracy,
         correct: accuracySummary.correct,
         attempted: accuracySummary.attempted,
@@ -8016,12 +8411,23 @@ app.get('/api/weekly/stats', (req, res) => {
       round: r.round,
       raceName: r.raceName,
       dates: { start: r.start_date, end: r.end_date },
-      actuals: actual ? {
-        p1: actual.p1_driver_id,
-        p2: actual.p2_driver_id,
-        p3: actual.p3_driver_id,
-        pole: actual.pole_driver_id,
-        fastestLap: actual.fastest_lap_driver_id,
+      actuals: (context.qualRows.length || context.raceRows.length || actual) ? {
+        qual: {
+          p1: context.qualTop5[0] || null,
+          p2: context.qualTop5[1] || null,
+          p3: context.qualTop5[2] || null,
+          p4: context.qualTop5[3] || null,
+          p5: context.qualTop5[4] || null
+        },
+        race: {
+          p1: context.raceTop5[0] || null,
+          p2: context.raceTop5[1] || null,
+          p3: context.raceTop5[2] || null,
+          p4: context.raceTop5[3] || null,
+          p5: context.raceTop5[4] || null
+        },
+        pole: context.poleDriverId,
+        fastestLap: context.fastestLapDriverId,
         sideBets: {
           poleConverts: sideBetActuals.poleConverts,
           frontRowWinner: sideBetActuals.frontRowWinner,
@@ -8123,7 +8529,8 @@ app.get('/api/weekly/stats', (req, res) => {
 
   const pickCounts = {};
   for (const pred of data.predictions.filter(p => p.season === season)) {
-    for (const key of ['p1_driver_id','p2_driver_id','p3_driver_id','pole_driver_id','fastest_lap_driver_id']) {
+    ensurePredictionFieldCompatibility(pred);
+    for (const key of [...POSITION_PICK_FIELDS, 'fastest_lap_driver_id']) {
       const v = pred[key];
       if (!v) continue;
       pickCounts[v] = (pickCounts[v] || 0) + 1;
@@ -8137,7 +8544,8 @@ app.get('/api/weekly/stats', (req, res) => {
 
   const winnerCounts = {};
   for (const pred of data.predictions.filter(p => p.season === season)) {
-    if (pred.p1_driver_id) winnerCounts[pred.p1_driver_id] = (winnerCounts[pred.p1_driver_id] || 0) + 1;
+    ensurePredictionFieldCompatibility(pred);
+    if (pred.race_p1_driver_id) winnerCounts[pred.race_p1_driver_id] = (winnerCounts[pred.race_p1_driver_id] || 0) + 1;
   }
   const winnerFrequency = drivers
     .map(d => ({ driverId: d.driverId, driverName: d.driverName, team: d.team, picks: winnerCounts[d.driverId] || 0 }))

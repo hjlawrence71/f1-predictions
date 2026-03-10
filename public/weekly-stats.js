@@ -156,10 +156,20 @@ function yesNoLabel(value) {
 
 function lockFieldLabel(value) {
   const map = {
-    p1: 'P1',
-    p2: 'P2',
-    p3: 'P3',
-    pole: 'Pole Position',
+    qualP1: 'Quali P1',
+    qualP2: 'Quali P2',
+    qualP3: 'Quali P3',
+    qualP4: 'Quali P4',
+    qualP5: 'Quali P5',
+    raceP1: 'Race P1',
+    raceP2: 'Race P2',
+    raceP3: 'Race P3',
+    raceP4: 'Race P4',
+    raceP5: 'Race P5',
+    p1: 'Race P1',
+    p2: 'Race P2',
+    p3: 'Race P3',
+    pole: 'Quali P1',
     fastestLap: 'Fastest Lap',
     sidebetPoleConverts: 'Pole Converts',
     sidebetFrontRowWinner: 'Front Row Winner',
@@ -203,15 +213,25 @@ function renderUserRoundCard(userRow, nameMap) {
   }
 
   const picks = userRow.picks || {};
+  const qualPicks = picks.qual || {};
+  const racePicks = picks.race || {};
   const sideBets = picks.sideBets || {};
   const points = userRow.points || {};
-  const topLine = [
-    pickChip('P1', driverName(nameMap, picks.p1)),
-    pickChip('P2', driverName(nameMap, picks.p2)),
-    pickChip('P3', driverName(nameMap, picks.p3))
+  const qualiLine = [
+    pickChip('Q1', driverName(nameMap, qualPicks.p1)),
+    pickChip('Q2', driverName(nameMap, qualPicks.p2)),
+    pickChip('Q3', driverName(nameMap, qualPicks.p3)),
+    pickChip('Q4', driverName(nameMap, qualPicks.p4)),
+    pickChip('Q5', driverName(nameMap, qualPicks.p5))
+  ].join('');
+  const raceLine = [
+    pickChip('R1', driverName(nameMap, racePicks.p1)),
+    pickChip('R2', driverName(nameMap, racePicks.p2)),
+    pickChip('R3', driverName(nameMap, racePicks.p3)),
+    pickChip('R4', driverName(nameMap, racePicks.p4)),
+    pickChip('R5', driverName(nameMap, racePicks.p5))
   ].join('');
   const supportLine = [
-    pickChip('Pole', driverName(nameMap, picks.pole)),
     pickChip('FL', driverName(nameMap, picks.fastestLap)),
     pickChip('Lock', lockFieldLabel(userRow.lock)),
     pickChip('Wildcard', picks.wildcardText || '—')
@@ -232,14 +252,20 @@ function renderUserRoundCard(userRow, nameMap) {
         <span class="chip ${points.total > 0 ? 'dark' : ''}">${points.total} pts</span>
       </div>
       <div class="round-user-metrics">
-        <span>Picks ${points.p1} · ${points.p2} · ${points.p3} · Pole ${points.pole} · FL ${points.fastestLap} · WC ${points.wildcard || 0}</span>
+        <span>Quali ${points.qualTotal || 0} · Race ${points.raceTotal || 0} · Podium bonus ${points.podiumBonus || 0}</span>
+        <span>FL ${points.fastestLap || 0} · WC ${points.wildcard || 0}</span>
         <span>Side bets ${points.sideBets || 0} pts · Stable ${points.sideBetStable || 0} · Chaos ${points.sideBetChaos || 0}</span>
       </div>
-      <div class="round-pick-strip">${topLine}</div>
+      <div class="round-section-label">Qualifying picks</div>
+      <div class="round-pick-strip">${qualiLine}</div>
+      <div class="round-section-label">Race picks</div>
+      <div class="round-pick-strip">${raceLine}</div>
       <div class="round-pick-strip round-pick-strip-secondary">${supportLine}</div>
       <div class="round-user-flags">
         <span class="chip">${(userRow.accuracy * 100).toFixed(1)}% accuracy</span>
-        <span class="chip ${userRow.podium_exact ? 'red' : ''}">${userRow.podium_exact ? 'Podium exact' : 'No podium exact'}</span>
+        <span class="chip ${userRow.podium_exact ? 'red' : ''}">${
+          userRow.podium_exact ? 'Podium exact' : userRow.podium_match_count === 3 ? 'Podium 3/3' : userRow.podium_match_count === 2 ? 'Podium 2/3' : 'No podium bonus'
+        }</span>
         <span class="chip">Lock bonus ${points.lock || 0}</span>
         <span class="chip ${userRow.wildcardResult === true ? 'dark' : userRow.wildcardResult === false ? 'red' : ''}">${
           userRow.wildcardResult === true ? 'Wildcard hit' : userRow.wildcardResult === false ? 'Wildcard miss' : 'Wildcard pending'
@@ -255,10 +281,13 @@ function renderUserRoundCard(userRow, nameMap) {
 
 function renderRoundDetails(roundData, nameMap) {
   const actual = roundData.actuals || {};
-  const actualPodium = actual.p1
-    ? `${driverName(nameMap, actual.p1)} / ${driverName(nameMap, actual.p2)} / ${driverName(nameMap, actual.p3)}`
+  const actualRaceTop5 = actual.race?.p1
+    ? [actual.race.p1, actual.race.p2, actual.race.p3, actual.race.p4, actual.race.p5].map((id) => driverName(nameMap, id)).join(' / ')
     : 'No official results yet';
-  const actualQuali = actual.pole ? driverName(nameMap, actual.pole) : 'No pole data yet';
+  const actualQualiTop5 = actual.qual?.p1
+    ? [actual.qual.p1, actual.qual.p2, actual.qual.p3, actual.qual.p4, actual.qual.p5].map((id) => driverName(nameMap, id)).join(' / ')
+    : 'No qualifying data yet';
+  const actualPole = actual.pole ? driverName(nameMap, actual.pole) : 'No pole data yet';
   const actualFastest = actual.fastestLap ? driverName(nameMap, actual.fastestLap) : 'No fastest lap data yet';
   const actualSide = actual.sideBets || {};
   const actualSideSummary = [
@@ -287,12 +316,16 @@ function renderRoundDetails(roundData, nameMap) {
       <div class="round-actuals">
         <div class="round-actuals-grid">
           <div class="round-actual-item">
-            <span class="round-section-label">Actual podium</span>
-            <strong>${actualPodium}</strong>
+            <span class="round-section-label">Actual race top 5</span>
+            <strong>${actualRaceTop5}</strong>
+          </div>
+          <div class="round-actual-item">
+            <span class="round-section-label">Actual qualifying top 5</span>
+            <strong>${actualQualiTop5}</strong>
           </div>
           <div class="round-actual-item">
             <span class="round-section-label">Pole</span>
-            <strong>${actualQuali}</strong>
+            <strong>${actualPole}</strong>
           </div>
           <div class="round-actual-item">
             <span class="round-section-label">Fastest lap</span>

@@ -195,9 +195,28 @@ function renderPickLikelihood(pick) {
     return;
   }
 
+  const labelByKey = {
+    qualP1: 'Quali P1',
+    qualP2: 'Quali P2',
+    qualP3: 'Quali P3',
+    qualP4: 'Quali P4',
+    qualP5: 'Quali P5',
+    raceP1: 'Race P1',
+    raceP2: 'Race P2',
+    raceP3: 'Race P3',
+    raceP4: 'Race P4',
+    raceP5: 'Race P5',
+    p1: 'Race P1',
+    p2: 'Race P2',
+    p3: 'Race P3',
+    pole: 'Quali P1',
+    fastestLap: 'Fastest Lap',
+    wildcard: 'Wildcard'
+  };
+
   const rows = (pick.categories || []).map((row) => `
     <div class="pick-likelihood-row">
-      <span>${row.key}</span>
+      <span>${labelByKey[row.key] || row.key}</span>
       <strong>${row.driverName || '—'}</strong>
       <em>${formatPercent(row.probability)}</em>
     </div>
@@ -210,7 +229,7 @@ function renderPickLikelihood(pick) {
     </div>
     <div class="pick-likelihood-grid">${rows}</div>
     <div class="pick-likelihood-meta">
-      <span>${pick.lock_field ? `Lock: ${pick.lock_field}` : 'Lock: none'}</span>
+      <span>${pick.lock_field ? `Lock: ${labelByKey[pick.lock_field] || pick.lock_field}` : 'Lock: none'}</span>
       <span>Lock hit: ${formatPercent(pick.lock_hit_probability)}</span>
       <span>Podium exact: ${formatPercent(pick.podium_exact_probability)}</span>
     </div>

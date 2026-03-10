@@ -140,21 +140,34 @@ function renderWildcardControls(preds, nameMap) {
 
 function renderPicksTable(preds, nameMap) {
   const actuals = preds[0]?.actuals || {};
-  const actualSummary = {
-    p1: driverName(nameMap, actuals.p1_driver_id),
-    p2: driverName(nameMap, actuals.p2_driver_id),
-    p3: driverName(nameMap, actuals.p3_driver_id),
-    pole: driverName(nameMap, actuals.pole_driver_id),
-    fastest: driverName(nameMap, actuals.fastest_lap_driver_id)
-  };
+  const actualQual = [
+    actuals.qual_p1_driver_id,
+    actuals.qual_p2_driver_id,
+    actuals.qual_p3_driver_id,
+    actuals.qual_p4_driver_id,
+    actuals.qual_p5_driver_id
+  ];
+  const actualRace = [
+    actuals.race_p1_driver_id,
+    actuals.race_p2_driver_id,
+    actuals.race_p3_driver_id,
+    actuals.race_p4_driver_id,
+    actuals.race_p5_driver_id
+  ];
 
   const pickRows = preds.map((p) => `
     <tr>
       <td>${p.user}</td>
-      <td>${driverName(nameMap, p.p1_driver_id)}</td>
-      <td>${driverName(nameMap, p.p2_driver_id)}</td>
-      <td>${driverName(nameMap, p.p3_driver_id)}</td>
-      <td>${driverName(nameMap, p.pole_driver_id)}</td>
+      <td>${driverName(nameMap, p.qual_p1_driver_id)}</td>
+      <td>${driverName(nameMap, p.qual_p2_driver_id)}</td>
+      <td>${driverName(nameMap, p.qual_p3_driver_id)}</td>
+      <td>${driverName(nameMap, p.qual_p4_driver_id)}</td>
+      <td>${driverName(nameMap, p.qual_p5_driver_id)}</td>
+      <td>${driverName(nameMap, p.race_p1_driver_id)}</td>
+      <td>${driverName(nameMap, p.race_p2_driver_id)}</td>
+      <td>${driverName(nameMap, p.race_p3_driver_id)}</td>
+      <td>${driverName(nameMap, p.race_p4_driver_id)}</td>
+      <td>${driverName(nameMap, p.race_p5_driver_id)}</td>
       <td>${driverName(nameMap, p.fastest_lap_driver_id)}</td>
       <td>${p.wildcard_text || driverName(nameMap, p.wildcard_driver_id)}</td>
       <td><span class="chip ${wildcardStateTone(p.wildcard_result)}">${wildcardStateLabel(p.wildcard_result)}</span></td>
@@ -167,10 +180,16 @@ function renderPicksTable(preds, nameMap) {
       <thead>
         <tr>
           <th>User</th>
-          <th>P1</th>
-          <th>P2</th>
-          <th>P3</th>
-          <th>Pole</th>
+          <th>Q1</th>
+          <th>Q2</th>
+          <th>Q3</th>
+          <th>Q4</th>
+          <th>Q5</th>
+          <th>R1</th>
+          <th>R2</th>
+          <th>R3</th>
+          <th>R4</th>
+          <th>R5</th>
           <th>Fastest</th>
           <th>Wildcard</th>
           <th>Wildcard score</th>
@@ -180,11 +199,17 @@ function renderPicksTable(preds, nameMap) {
       <tbody>
         <tr class="actuals-row">
           <td>Actual</td>
-          <td>${actualSummary.p1}</td>
-          <td>${actualSummary.p2}</td>
-          <td>${actualSummary.p3}</td>
-          <td>${actualSummary.pole}</td>
-          <td>${actualSummary.fastest}</td>
+          <td>${driverName(nameMap, actualQual[0])}</td>
+          <td>${driverName(nameMap, actualQual[1])}</td>
+          <td>${driverName(nameMap, actualQual[2])}</td>
+          <td>${driverName(nameMap, actualQual[3])}</td>
+          <td>${driverName(nameMap, actualQual[4])}</td>
+          <td>${driverName(nameMap, actualRace[0])}</td>
+          <td>${driverName(nameMap, actualRace[1])}</td>
+          <td>${driverName(nameMap, actualRace[2])}</td>
+          <td>${driverName(nameMap, actualRace[3])}</td>
+          <td>${driverName(nameMap, actualRace[4])}</td>
+          <td>${driverName(nameMap, actuals.fastest_lap_driver_id)}</td>
           <td>Manual review</td>
           <td>—</td>
           <td>—</td>

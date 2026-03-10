@@ -48,7 +48,19 @@ const reviewProjectionCache = new Map();
 let reviewRenderToken = 0;
 let weekendSignalRenderToken = 0;
 
-const REQUIRED_PICK_KEYS = ['p1', 'p2', 'p3', 'pole', 'fastestLap'];
+const REQUIRED_PICK_KEYS = [
+  'qualP1',
+  'qualP2',
+  'qualP3',
+  'qualP4',
+  'qualP5',
+  'raceP1',
+  'raceP2',
+  'raceP3',
+  'raceP4',
+  'raceP5',
+  'fastestLap'
+];
 const SIDE_BET_FIELDS = [
   { key: 'poleConverts', elementId: 'sidebetPoleConverts' },
   { key: 'frontRowWinner', elementId: 'sidebetFrontRowWinner' },
@@ -59,10 +71,20 @@ const SIDE_BET_FIELDS = [
 ];
 
 const LOCK_FIELD_LABELS = {
-  p1: 'P1',
-  p2: 'P2',
-  p3: 'P3',
-  pole: 'Pole Position',
+  qualP1: 'Quali P1',
+  qualP2: 'Quali P2',
+  qualP3: 'Quali P3',
+  qualP4: 'Quali P4',
+  qualP5: 'Quali P5',
+  raceP1: 'Race P1',
+  raceP2: 'Race P2',
+  raceP3: 'Race P3',
+  raceP4: 'Race P4',
+  raceP5: 'Race P5',
+  p1: 'Race P1',
+  p2: 'Race P2',
+  p3: 'Race P3',
+  pole: 'Quali P1',
   fastestLap: 'Fastest Lap',
   sidebetPoleConverts: 'Pole Converts',
   sidebetFrontRowWinner: 'Front Row Winner',
@@ -641,17 +663,23 @@ async function renderReviewPanel() {
     reviewPanel.innerHTML = `
       <div class="review-box">
         <h3>Pick Review</h3>
-        <div class="muted">Complete P1, P2, P3, Pole, and Fastest Lap to unlock review.</div>
+        <div class="muted">Complete Quali P1–P5, Race P1–P5, and Fastest Lap to unlock review.</div>
       </div>
     `;
     return;
   }
 
   const slots = [
-    { key: 'p1', label: 'P1', selector: '.driverSelect[data-pick="p1"]' },
-    { key: 'p2', label: 'P2', selector: '.driverSelect[data-pick="p2"]' },
-    { key: 'p3', label: 'P3', selector: '.driverSelect[data-pick="p3"]' },
-    { key: 'pole', label: 'Pole', selector: '.driverSelect[data-pick="pole"]' },
+    { key: 'qualP1', label: 'Quali P1', selector: '.driverSelect[data-pick="qualP1"]', kind: 'qual', position: 1 },
+    { key: 'qualP2', label: 'Quali P2', selector: '.driverSelect[data-pick="qualP2"]', kind: 'qual', position: 2 },
+    { key: 'qualP3', label: 'Quali P3', selector: '.driverSelect[data-pick="qualP3"]', kind: 'qual', position: 3 },
+    { key: 'qualP4', label: 'Quali P4', selector: '.driverSelect[data-pick="qualP4"]', kind: 'qual', position: 4 },
+    { key: 'qualP5', label: 'Quali P5', selector: '.driverSelect[data-pick="qualP5"]', kind: 'qual', position: 5 },
+    { key: 'raceP1', label: 'Race P1', selector: '.driverSelect[data-pick="raceP1"]', kind: 'race', position: 1 },
+    { key: 'raceP2', label: 'Race P2', selector: '.driverSelect[data-pick="raceP2"]', kind: 'race', position: 2 },
+    { key: 'raceP3', label: 'Race P3', selector: '.driverSelect[data-pick="raceP3"]', kind: 'race', position: 3 },
+    { key: 'raceP4', label: 'Race P4', selector: '.driverSelect[data-pick="raceP4"]', kind: 'race', position: 4 },
+    { key: 'raceP5', label: 'Race P5', selector: '.driverSelect[data-pick="raceP5"]', kind: 'race', position: 5 },
     { key: 'fastestLap', label: 'Fastest', selector: '.driverSelect[data-pick="fastestLap"]' }
   ];
 
@@ -681,35 +709,45 @@ async function renderReviewPanel() {
   if (token !== reviewRenderToken) return;
 
   const raceRows = projection?.race_projection || [];
-  const qualRows = projection?.qualifying_projection || [];
   const raceById = new Map(raceRows.map((row) => [row.driverId, row]));
-  const qualById = new Map(qualRows.map((row) => [row.driverId, row]));
+  const distributions = new Map();
 
-  const distributions = {
-    p1: raceRows.map((row) => Number(row?.probabilities_by_position?.[1] ?? 0)).filter(Number.isFinite),
-    p2: raceRows.map((row) => Number(row?.probabilities_by_position?.[2] ?? 0)).filter(Number.isFinite),
-    p3: raceRows.map((row) => Number(row?.probabilities_by_position?.[3] ?? 0)).filter(Number.isFinite),
-    pole: qualRows.map((row) => Number(row?.pole_probability ?? 0)).filter(Number.isFinite),
-    fastestLap: raceRows.map((row) => Number(row?.probabilities?.fastest_lap ?? 0)).filter(Number.isFinite)
-  };
+  for (const slot of slots) {
+    let values = [];
+    if (slot.kind === 'qual') {
+      values = raceRows
+        .map((row) => Number(row?.qualifying_probabilities_by_position?.[slot.position] ?? 0))
+        .filter(Number.isFinite);
+    } else if (slot.kind === 'race') {
+      values = raceRows
+        .map((row) => Number(row?.probabilities_by_position?.[slot.position] ?? 0))
+        .filter(Number.isFinite);
+    } else if (slot.key === 'fastestLap') {
+      values = raceRows
+        .map((row) => Number(row?.probabilities?.fastest_lap ?? 0))
+        .filter(Number.isFinite);
+    }
+    distributions.set(slot.key, values);
+  }
 
   const getSlotProbability = (slotKey, driverId) => {
     if (!driverId) return null;
+    const row = raceById.get(driverId);
+    if (!row) return null;
 
-    if (slotKey === 'pole') {
-      const row = qualById.get(driverId);
-      return clamp01(row?.pole_probability ?? null);
+    if (slotKey.startsWith('qualP')) {
+      const position = Number(slotKey.replace('qualP', ''));
+      return clamp01(row?.qualifying_probabilities_by_position?.[position] ?? null);
+    }
+
+    if (slotKey.startsWith('raceP')) {
+      const position = Number(slotKey.replace('raceP', ''));
+      return clamp01(row?.probabilities_by_position?.[position] ?? null);
     }
 
     if (slotKey === 'fastestLap') {
       const row = raceById.get(driverId);
       return clamp01(row?.probabilities?.fastest_lap ?? null);
-    }
-
-    if (slotKey === 'p1' || slotKey === 'p2' || slotKey === 'p3') {
-      const row = raceById.get(driverId);
-      const position = slotKey === 'p1' ? 1 : slotKey === 'p2' ? 2 : 3;
-      return clamp01(row?.probabilities_by_position?.[position] ?? null);
     }
 
     return null;
@@ -719,7 +757,7 @@ async function renderReviewPanel() {
 
   const cards = selections.map((slot) => {
     const probability = getSlotProbability(slot.key, slot.driverId);
-    const distribution = distributions[slot.key] || [];
+    const distribution = distributions.get(slot.key) || [];
     const percentile = percentileRank(probability, distribution);
     const rank = descendingRank(probability, distribution);
     const confidence = raceById.get(slot.driverId)?.confidence ?? null;
@@ -752,6 +790,7 @@ async function renderReviewPanel() {
   const lockConfidence = lockSelection?.confidence ?? 0.65;
   const lockColor = buildReviewColorStyle(lockPercentile, lockConfidence);
   const lockDisplay = lockField === '—' ? '—' : lockFieldLabel(lockField);
+  const pickLikelihood = projection?.pick_likelihood || null;
 
   cards.push(`
     <div class="review-item review-item-likelihood is-neutral">
@@ -768,6 +807,15 @@ async function renderReviewPanel() {
       <strong>${lockDisplay}</strong>
       <em>${formatProbability(lockSelection?.probability ?? null)}</em>
       <small>${lockField === '—' ? 'No lock selected' : (lockSelection?.probability === null || lockSelection?.probability === undefined ? 'Locked yes/no pick' : `${lockColor.tone} lock call`)}</small>
+    </div>
+  `);
+
+  cards.push(`
+    <div class="review-item review-item-likelihood is-neutral">
+      <span>Podium Bonus</span>
+      <strong>Exact / 3-of-3 / 2-of-3</strong>
+      <em>${formatProbability(pickLikelihood?.podium_exact_probability ?? null)} / ${formatProbability(pickLikelihood?.podium_any_order_probability ?? null)} / ${formatProbability(pickLikelihood?.podium_two_of_three_probability ?? null)}</em>
+      <small>Bonus: +3 exact, +1 any order, +0.5 with 2 of 3</small>
     </div>
   `);
 
